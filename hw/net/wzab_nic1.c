@@ -1,7 +1,7 @@
 /*
  * QEMU -  Emulation of network adapter with Bus Mastering DMA and scattered packet buffers
  *
- * Copyright Wojciech M. Zabolotny ( wzab@ise.pw.edu.pl ) 17.06.2011
+ * Copyright Wojciech M. Zabolotny ( wzab@ise.pw.edu.pl ) 2011-2014
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -33,10 +33,11 @@
 //Simulated processing time
 #define NIC1_PROCESSING_TIME 5000000
 #include <string.h>
-#include "hw.h"
-#include "pci.h"
-#include "net.h"
-#include "qemu-timer.h"
+#include "hw/sysbus.h"
+#include "hw/hw.h"
+#include "hw/pci/pci.h"
+#include "net/net.h"
+#include "qemu/timer.h"
 #include "wzab_nic1.h"
 #include <stdint.h>
 
@@ -60,7 +61,7 @@
   Packet transmission:
   Driver writes the packet to the packet buffer. After the packet is stored,
   the driver updates the head pointer in the Tx packet buffer.
-
+*/
 /* Structure used as a pointer to data in Tx/Rx buffers */
 typedef struct
 {
@@ -70,18 +71,23 @@ typedef struct
 
 typedef struct WzNic1State
 {
-    PCIDevice dev;
+    
+    /*<private>*/
+    PCIDevice parent_obj;
+    /*<public>*/
     union
     {
         WzNic1Regs r;
         uint32_t u32[sizeof ( WzNic1Regs ) /sizeof ( uint32_t ) ];
     } regs;
+    
     WzNic1Ptr Tx_Tail;
     WzNic1Ptr Tx_Head;
     WzNic1Ptr Rx_Tail;
     WzNic1Ptr Rx_Head;
-    uint32_t wz_nic1_mmio_io_addr;
+    MemoryRegion mmio;
     QEMUTimer * timer;
+    QemuMutex lock;
     NICState *nic;
     NICConf conf;
 unsigned int Error:
@@ -104,14 +110,27 @@ unsigned int promiscous :
     1;
 } WzNic1State;
 
+#define TYPE_PCI_WZNIC1 "pci-wznic1"
+#define PCI_WZNIC1(obj) \
+    OBJECT_CHECK(WzNic1State, (obj), TYPE_PCI_WZNIC1)
+
 //Some prototypes...
-uint32_t wz_nic1_mem_readl ( void *opaque, target_phys_addr_t addr );
-void wz_nic1_mem_writel ( void *opaque, target_phys_addr_t addr, uint32_t val );
-int wz_nic1_init ( PCIBus *bus );
+static uint64_t pci_wz_nic1_read ( void *opaque, hwaddr addr, unsigned size );
+static void pci_wz_nic1_write ( void *opaque, hwaddr addr, uint64_t val, unsigned size );
+static int wz_nic1_init ( PCIDevice *dev );
 void wz_nic1_send_packets ( WzNic1State * s );
 void wz_nic1_update_irq(WzNic1State * s);
 static NetClientInfo wz_nic1_nc_info;
 
+static const MemoryRegionOps pci_wz_enc1_mmio_ops = {
+    .read = pci_wz_nic1_read,
+    .write = pci_wz_nic1_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .impl = {
+        .min_access_size = 4, //Always 32-bit access!!
+        .max_access_size = 4,
+    },
+};
 
 static void wz_nic1_reset ( WzNic1State *s )
 {
@@ -122,7 +141,7 @@ static void wz_nic1_reset ( WzNic1State *s )
 }
 
 /* called for read accesses to our register memory area */
-uint32_t wz_nic1_mem_readl ( void *opaque, target_phys_addr_t addr )
+uint64_t pci_wz_nic1_read ( void *opaque, hwaddr addr, unsigned size )
 {
     int i_addr;
 #ifdef DEBUG_wzab1
@@ -156,49 +175,49 @@ uint32_t wz_nic1_mem_readl ( void *opaque, target_phys_addr_t addr )
     else if ( addr == offsetof ( WzNic1Regs, RxTail ) )
     {
         uint32_t res;
-        qemu_mutex_lock_iothread();
+        qemu_mutex_lock(&s->lock);
         res = s->Rx_Tail.offset+(s->Rx_Tail.page<<10);
-        qemu_mutex_unlock_iothread();
+        qemu_mutex_unlock(&s->lock);
         return res;
     }
     else if ( addr == offsetof ( WzNic1Regs, RxHead ) )
     {
         uint32_t res;
-        qemu_mutex_lock_iothread();
+        qemu_mutex_lock(&s->lock);
         res = s->Rx_Head.offset+(s->Rx_Head.page<<10);
-        qemu_mutex_unlock_iothread();
+        qemu_mutex_unlock(&s->lock);
         return res;
     }
     else if ( addr == offsetof ( WzNic1Regs, RxNumOfBytes ) )
     {
         uint32_t res;
-        qemu_mutex_lock_iothread();
+        qemu_mutex_lock(&s->lock);
         res = WZNIC1_NOF_RX_PAGES * 4096;
-        qemu_mutex_unlock_iothread();
+        qemu_mutex_unlock(&s->lock);
         return res;
     }
     else if ( addr == offsetof ( WzNic1Regs, TxTail ) )
     {
         uint32_t res;
-        qemu_mutex_lock_iothread();
+        qemu_mutex_lock(&s->lock);
         res = s->Tx_Tail.offset+(s->Tx_Tail.page<<10);
-        qemu_mutex_unlock_iothread();
+        qemu_mutex_unlock(&s->lock);
         return res;
     }
     else if ( addr == offsetof ( WzNic1Regs, TxHead ) )
     {
         uint32_t res;
-        qemu_mutex_lock_iothread();
+        qemu_mutex_lock(&s->lock);
         res = s->Tx_Head.offset+(s->Tx_Head.page<<10);
-        qemu_mutex_unlock_iothread();
+        qemu_mutex_unlock(&s->lock);
         return res;
     }
     else if ( addr == offsetof ( WzNic1Regs, TxNumOfBytes ) )
     {
         uint32_t res;
-        qemu_mutex_lock_iothread();
+        qemu_mutex_lock(&s->lock);
         res = WZNIC1_NOF_TX_PAGES * 4096;
-        qemu_mutex_unlock_iothread();
+        qemu_mutex_unlock(&s->lock);
         return res;
     }
     else
@@ -267,10 +286,10 @@ static inline uint32_t rx_buf_space(WzNic1State *s)
 {
     const uint32_t num_of_bytes = WZNIC1_NOF_RX_PAGES*4096;
     int space;
-    qemu_mutex_lock_iothread();
+    qemu_mutex_lock(&s->lock);
     int head = s->Rx_Head.page*4096+s->Rx_Head.offset*4;
     int tail = s->Rx_Tail.page*4096+s->Rx_Tail.offset*4;
-    qemu_mutex_unlock_iothread();
+    qemu_mutex_unlock(&s->lock);
     space = tail-head;
     if (space <= 0) space += num_of_bytes;
     space --;
@@ -293,17 +312,17 @@ void wz_nic1_send_packets ( WzNic1State * s )
         int bptr;
         uint32_t len_in_bytes; //Length of the packet without the header
         uint32_t len_in_u32; //Length of the packet in 32-bit words
-        int niov; //Number of iovecs to send the packet
-        qemu_mutex_lock_iothread();
+        //int niov; //Number of iovecs to send the packet
+        qemu_mutex_lock(&s->lock);
         if ((s->Tx_Tail.offset == s->Tx_Head.offset) &&
                 (s->Tx_Tail.page == s->Tx_Head.page)) {
-            qemu_mutex_unlock_iothread();
+            qemu_mutex_unlock(&s->lock);
             return; //No more packets to send
         }
         memcpy ( &ptr,&s->Tx_Tail,sizeof ( ptr ) );
-        qemu_mutex_unlock_iothread();
+        qemu_mutex_unlock(&s->lock);
         bptr = tx_buf_addr ( s, ptr );
-        cpu_physical_memory_read(bptr,&tmp,4);
+        pci_dma_read(&s->parent_obj,bptr,&tmp,4);
         if (tmp != WZNIC1_PKT_MAGIC_NUMBER )
         {
             s->TxCorruptedBuffer = 1;
@@ -313,11 +332,11 @@ void wz_nic1_send_packets ( WzNic1State * s )
         }
         //Take the packet length in bytes
         tx_increase_ptr ( s,&ptr );
-        cpu_physical_memory_read(tx_buf_addr ( s,ptr ),&len_in_bytes,4);
+        pci_dma_read(&s->parent_obj, tx_buf_addr ( s,ptr ),&len_in_bytes,4);
         len_in_u32 = ( len_in_bytes+3 ) >>2;
         tx_increase_ptr ( s,&ptr );
         //Take the flags
-        cpu_physical_memory_read(tx_buf_addr ( s,ptr ),&flags,4);
+        pci_dma_read(&s->parent_obj, tx_buf_addr ( s,ptr ),&flags,4);
         //Mark the packet as serviced
         {
             //To be done!!!
@@ -332,7 +351,7 @@ void wz_nic1_send_packets ( WzNic1State * s )
             int i=0;
             while (len>0) {
                 //Copy the whole world
-                cpu_physical_memory_read(tx_buf_addr ( s,ptr ),&pkt_buf[i],4);
+                pci_dma_read(&s->parent_obj, tx_buf_addr ( s,ptr ),&pkt_buf[i],4);
                 tx_increase_ptr ( s,&ptr );
                 len -= 4;
                 i++;
@@ -343,7 +362,7 @@ void wz_nic1_send_packets ( WzNic1State * s )
 	      for(i=0;i<10;i++) printf("%2.2x ",(int) pkt_buf[i]);
 	      printf("\n");
 	    }
-            qemu_send_packet ( &s->nic->nc, pkt_buf, len_in_bytes);
+            qemu_send_packet ( s->nic->ncs, (uint8_t *) pkt_buf, len_in_bytes);
         }
         /*
         * The code below could be nice and efficient, but requires
@@ -370,9 +389,9 @@ void wz_nic1_send_packets ( WzNic1State * s )
             wz_nic1_update_irq ( s );
         }
         */
-        qemu_mutex_lock_iothread();
+        qemu_mutex_lock(&s->lock);
         memcpy ( &s->Tx_Tail,&ptr,sizeof ( ptr ) );
-        qemu_mutex_unlock_iothread();
+        qemu_mutex_unlock(&s->lock);
         wz_nic1_update_irq(s);
     }
     return;
@@ -387,16 +406,16 @@ static int wz_nic1_buffer_full ( WzNic1State *s )
     return 0;
 }
 
-static int wz_nic1_can_receive ( VLANClientState *nc )
+static int wz_nic1_can_receive ( NetClientState *nc )
 {
-    WzNic1State *s = DO_UPCAST ( NICState, nc, nc )->opaque;
+    WzNic1State *s = PCI_WZNIC1(nc);
     if (s->Rx_Enabled==0) return 0;
     return !wz_nic1_buffer_full ( s );
 }
 
-static ssize_t wz_nic1_receive ( VLANClientState *nc, const uint8_t *buf, size_t size )
+static ssize_t wz_nic1_receive ( NetClientState *nc, const uint8_t *buf, size_t size )
 {
-    WzNic1State *s = DO_UPCAST ( NICState, nc, nc )->opaque;
+    WzNic1State *s = PCI_WZNIC1(nc);
 
     if ( !wz_nic1_can_receive ( nc ) )
         return -1;
@@ -414,23 +433,23 @@ static ssize_t wz_nic1_receive ( VLANClientState *nc, const uint8_t *buf, size_t
         memcpy ( &ptr,&s->Rx_Head,sizeof ( ptr ) );
         bptr = rx_buf_addr ( s, ptr ); //To jest adres w maszynie wirtualnej!!!
         tmp = WZNIC1_PKT_MAGIC_NUMBER;
-        cpu_physical_memory_write(bptr,&tmp,4);
+        pci_dma_write(&s->parent_obj,bptr,&tmp,4);
         /* Write packet header */
         //We are already sure, that the packet will fit
         rx_increase_ptr ( s,&ptr );
         bptr = rx_buf_addr (s, ptr );
-        cpu_physical_memory_write(bptr,&size,4); //Length of the packet
+        pci_dma_write(&s->parent_obj,bptr,&size,4); //Length of the packet
         rx_increase_ptr ( s, &ptr );
         bptr = rx_buf_addr (s, ptr );
         tmp = 0 ; //Flags - @@ to be corrected!
-        cpu_physical_memory_write(bptr,&tmp,4); //Flags of the packet
+        pci_dma_write(&s->parent_obj,bptr,&tmp,4); //Flags of the packet
         rx_increase_ptr ( s, &ptr );
         //Now we can copy the data
         tmp_size = size;
         while ( tmp_size >= 4 )
         {
             bptr = rx_buf_addr (s, ptr );
-            cpu_physical_memory_write(bptr,buf,4); //Contents of the packet
+            pci_dma_write(&s->parent_obj,bptr,buf,4); //Contents of the packet
             rx_increase_ptr ( s, &ptr );
             tmp_size -= 4;
             buf+=4;
@@ -448,13 +467,13 @@ static ssize_t wz_nic1_receive ( VLANClientState *nc, const uint8_t *buf, size_t
                 tmp_size--;
             }
             bptr = rx_buf_addr (s, ptr );
-            cpu_physical_memory_write(bptr,&tmp,4); //Rest of the content of the packet
+            pci_dma_write(&s->parent_obj,bptr,&tmp,4); //Rest of the content of the packet
             //OK. The whole packet is stored, so now we have to update the pointer
             rx_increase_ptr ( s, &ptr );
         }
-        qemu_mutex_lock_iothread();
+        qemu_mutex_lock(&s->lock);
         memcpy ( &s->Rx_Head, &ptr, sizeof ( ptr ) );
-        qemu_mutex_unlock_iothread();
+        qemu_mutex_unlock(&s->lock);
     }
     wz_nic1_update_irq( s );
     return size;
@@ -462,7 +481,7 @@ static ssize_t wz_nic1_receive ( VLANClientState *nc, const uint8_t *buf, size_t
 
 
 /* called for write accesses to our register memory area */
-void wz_nic1_mem_writel ( void *opaque, target_phys_addr_t addr, uint32_t val )
+static void pci_wz_nic1_write ( void *opaque, hwaddr addr, uint64_t val, unsigned size )
 {
     WzNic1State *s = opaque;
     int i_addr;
@@ -483,22 +502,22 @@ void wz_nic1_mem_writel ( void *opaque, target_phys_addr_t addr, uint32_t val )
         if (addr==offsetof (WzNic1Regs,RxTail))
         {
             uint32_t tmp;
-            qemu_mutex_lock_iothread();
+            qemu_mutex_lock(&s->lock);
             s->Rx_Tail.offset=val & 0x3ff;
             tmp=val >> 10;
             if (tmp >= WZNIC1_NOF_RX_PAGES) tmp = 0;
             s->Rx_Tail.page = tmp;
-            qemu_mutex_unlock_iothread();
+            qemu_mutex_unlock(&s->lock);
         }
         if (addr==offsetof (WzNic1Regs,TxHead))
         {
             uint32_t tmp;
-            qemu_mutex_lock_iothread();
+            qemu_mutex_lock(&s->lock);
             s->Tx_Head.offset=val & 0x3ff;
             tmp=val >> 10;
             if (tmp >= WZNIC1_NOF_TX_PAGES) tmp = 0;
             s->Tx_Head.page = tmp;
-            qemu_mutex_unlock_iothread();
+            qemu_mutex_unlock(&s->lock);
         }
         if ( addr==offsetof ( WzNic1Regs,Ctrl ) )
         {
@@ -565,36 +584,6 @@ static void wzab1_tick ( void *opaque )
 
 }
 
-
-static void wz_nic1_map ( PCIDevice *pci_dev, int region_num,
-                          pcibus_t addr, pcibus_t size, int type )
-{
-    WzNic1State *s = DO_UPCAST ( WzNic1State, dev, pci_dev );
-
-    ( void ) region_num;
-    ( void ) size;
-    ( void ) type;
-
-    cpu_register_physical_memory ( addr,size,s->wz_nic1_mmio_io_addr );
-}
-
-
-/* We handle only 32-bit accesses! */
-CPUReadMemoryFunc * const wz_nic1_mmio_read[3] =
-{
-    NULL,
-    NULL,
-    wz_nic1_mem_readl,
-};
-
-/* We handle only 32-bit accesses! */
-CPUWriteMemoryFunc * const wz_nic1_mmio_write[3] =
-{
-    NULL,
-    NULL,
-    wz_nic1_mem_writel,
-};
-
 //Sorry, but the state description below is not complete!
 //You are free to fix it!
 static const VMStateDescription vmstate_wz_nic1 =
@@ -605,7 +594,7 @@ static const VMStateDescription vmstate_wz_nic1 =
     .minimum_version_id_old = 2,
     .fields      = ( VMStateField [] )
     {
-        VMSTATE_PCI_DEVICE ( dev, WzNic1State ),
+        VMSTATE_PCI_DEVICE ( parent_obj, WzNic1State ),
         VMSTATE_TIMER ( timer,WzNic1State ),
         VMSTATE_END_OF_LIST()
     }
@@ -613,14 +602,14 @@ static const VMStateDescription vmstate_wz_nic1 =
 
 static void wz_nic1_on_reset ( void *opaque )
 {
-    WzNic1State *s = opaque;
+    WzNic1State *s = PCI_WZNIC1(opaque);
     wz_nic1_reset ( s );
 }
 
-static int wz_nic1_initfn ( PCIDevice *dev )
+static int pci_wz_nic1_init ( PCIDevice *dev )
 {
-    WzNic1State *s = DO_UPCAST ( WzNic1State, dev, dev );
-    uint8_t *c = s->dev.config;
+    WzNic1State *s = PCI_WZNIC1 ( dev );
+    uint8_t *c = s->parent_obj.config;
     s->Rx_Irq_Enabled=0;
     s->Tx_Irq_Enabled=0;
     s->Rx_Enabled=0;
@@ -634,24 +623,21 @@ static int wz_nic1_initfn ( PCIDevice *dev )
     s->Tx_Tail.page=0;
     s->Error=0;
     s->TxCorruptedBuffer=0;
-    //Set values in the configuration space
-    pci_config_set_vendor_id ( c, PCI_VENDOR_ID_WZAB );
-    pci_config_set_device_id ( c, PCI_DEVICE_ID_WZAB_WZNIC1 );
-    pci_config_set_class ( c, PCI_CLASS_NETWORK_ETHERNET );
+    qemu_mutex_init(&s->lock);
 
     /* TODO: RST# value should be 0. */
     c[PCI_INTERRUPT_PIN] = 1;
     //Register memory mapped registers
-    s->wz_nic1_mmio_io_addr = cpu_register_io_memory ( wz_nic1_mmio_read, wz_nic1_mmio_write,
-                              s, DEVICE_LITTLE_ENDIAN );
-    pci_register_bar ( &s->dev, 0, 0x1000, PCI_BASE_ADDRESS_SPACE_MEMORY, wz_nic1_map );
+    memory_region_init_io(&s->mmio,OBJECT(s),&pci_wz_enc1_mmio_ops,s,
+                        "pci-wznic1-mmio", 0x100); //@@sizeof(s->regs.u32));
+    pci_register_bar (&s->parent_obj, 0,  PCI_BASE_ADDRESS_SPACE_MEMORY,&s->mmio);
     qemu_register_reset ( wz_nic1_on_reset, s );
     qemu_macaddr_default_if_unset(&s->conf.macaddr);
     s->nic = qemu_new_nic(&wz_nic1_nc_info, &s->conf,
-                          dev->qdev.info->name, dev->qdev.id, s);
-    qemu_format_nic_info_str(&s->nic->nc, s->conf.macaddr.a);
+                            object_get_typename(OBJECT(&dev->qdev)), dev->qdev.id, s);
+    qemu_format_nic_info_str(qemu_get_queue(s->nic), s->conf.macaddr.a);
     //Register timer used to simulate processing time
-    s->timer = qemu_new_timer ( vm_clock, wzab1_tick, s );
+    s->timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, wzab1_tick, s );
     wz_nic1_reset ( s );
     return 0;
 }
@@ -660,69 +646,86 @@ void wz_nic1_update_irq(WzNic1State * s)
 {
     //Check Tx interrupt
     s->irq_pending = 0;
-    qemu_mutex_lock_iothread();
+    qemu_mutex_lock(&s->lock);
     if ((s->Tx_Head.page==s->Tx_Tail.page) && (s->Tx_Head.offset==s->Tx_Tail.offset))
         s->tx_irq_pending = 1;
     else
         s->tx_irq_pending = 0;
-    qemu_mutex_unlock_iothread();
+    qemu_mutex_unlock(&s->lock);
     //Check Rx interrupt
-    qemu_mutex_lock_iothread();
+    qemu_mutex_lock(&s->lock);
     if ((s->Rx_Head.page==s->Rx_Tail.page) && (s->Rx_Head.offset==s->Rx_Tail.offset))
         s->rx_irq_pending = 0;
     else
         s->rx_irq_pending = 1;
-    qemu_mutex_unlock_iothread();
+    qemu_mutex_unlock(&s->lock);
     if (s->Rx_Irq_Enabled && s->rx_irq_pending)
         s->irq_pending |= 1;
     if (s->Tx_Irq_Enabled && s->tx_irq_pending)
         s->irq_pending |= 1;
     if (s->irq_pending)
-        qemu_irq_raise(s->dev.irq[0]);
+        pci_irq_assert(&s->parent_obj);
     else
-        qemu_irq_lower(s->dev.irq[0]);
+        pci_irq_deassert(&s->parent_obj);
 }
 
-static void wz_nic1_cleanup(VLANClientState *nc)
+static void wz_nic1_cleanup(NetClientState *nc)
 {
-    struct WzNic1State *s = DO_UPCAST(NICState, nc, nc)->opaque;
+    struct WzNic1State *s = PCI_WZNIC1(nc);
 
     s->nic = NULL;
 }
 
 static NetClientInfo wz_nic1_nc_info = {
-    .type = NET_CLIENT_TYPE_NIC,
+    .type = NET_CLIENT_OPTIONS_KIND_NIC,
     .size = sizeof(NICState),
     .can_receive = wz_nic1_can_receive,
     .receive = wz_nic1_receive,
     .cleanup = wz_nic1_cleanup,
 };
 
-
-int wz_nic1_init ( PCIBus *bus )
+static void
+pci_wz_nic1_uninit(PCIDevice *dev)
 {
-    pci_create_simple ( bus, -1, "WZNIC1" );
-    return 0;
+    WzNic1State *d = PCI_WZNIC1(dev);
+    int i;
+
+    wz_nic1_reset(d);
 }
 
-static PCIDeviceInfo wz_nic1_info =
+static void qdev_pci_wznic1_reset(DeviceState *dev)
 {
-    .qdev.name    = "WZNIC1",
-    .qdev.desc    = "WZNIC1 - Model of network adapter card",
-    .qdev.size    = sizeof ( WzNic1State ),
-    .qdev.vmsd    = &vmstate_wz_nic1,
-    .init         = wz_nic1_initfn,
-    .qdev.props = (Property[]) {
-        DEFINE_NIC_PROPERTIES(WzNic1State, conf),
-        DEFINE_PROP_END_OF_LIST(),
-    }
+    WzNic1State *d = PCI_WZNIC1(dev);
+    wz_nic1_reset(d);
+}
+
+static void pci_wznic1_class_init(ObjectClass *klass, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
+
+    k->init = pci_wz_nic1_init;
+    k->exit = pci_wz_nic1_uninit;
+    k->vendor_id = PCI_VENDOR_ID_WZAB;
+    k->device_id = PCI_DEVICE_ID_WZAB_WZNIC1;
+    k->revision = 0x00;
+    k->class_id = PCI_CLASS_OTHERS;
+    dc->desc = "PCI demo Ethernet card";
+    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
+    dc->reset = qdev_pci_wznic1_reset;
+}
+
+static const TypeInfo pci_wznic1_info = {
+    .name          = TYPE_PCI_WZNIC1,
+    .parent        = TYPE_PCI_DEVICE,
+    .instance_size = sizeof(WzNic1State),
+    .class_init    = pci_wznic1_class_init,
 };
 
-
-static void wz_nic1_register ( void )
+static void pci_wznic1_register_types(void)
 {
-    pci_qdev_register ( &wz_nic1_info );
+    type_register_static(&pci_wznic1_info);
 }
 
-device_init ( wz_nic1_register );
+type_init(pci_wznic1_register_types)
 

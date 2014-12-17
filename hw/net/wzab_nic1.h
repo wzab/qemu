@@ -26,6 +26,7 @@ typedef struct {
     uint32_t Length;
     uint32_t Flags;
 } WzNic1_PktHeader;
+
 //Commands
 #define NIC1_CMD_ENA_TX_IRQ 1
 #define NIC1_CMD_DIS_TX_IRQ 2
