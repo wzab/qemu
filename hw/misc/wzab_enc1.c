@@ -230,7 +230,7 @@ static void pci_wz_enc1_write(void *opaque, hwaddr addr, uint64_t val, unsigned 
 	} else {
 	  //Normal operation - submit data to processing
 	  s->Working = 0x1;
-	  timer_mod(s->timer,qemu_clock_get_us(QEMU_CLOCK_VIRTUAL)+ENC1_PROCESSING_TIME);
+	  timer_mod(s->timer,qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)+ENC1_PROCESSING_TIME);
 	}
 	break;
       case ENC1_CMD_STOP:
@@ -279,7 +279,7 @@ static void wzab1_tick(void *opaque)
       if(!len) break; //Page with Length=0 is found
       for(i=0; i<len ; i+=32) {
 	//Read data from page to processing buffer
-	cpu_physical_memory_read(j+i,block,32);
+	pci_dma_read(&s->parent_obj,j+i,block,32);
 	if (s->enc_ndec) {
 	  //Encrypt data
 	  mcrypt_generic (s->td, block, 32);
@@ -288,7 +288,7 @@ static void wzab1_tick(void *opaque)
 	  mdecrypt_generic (s->td, block, 32); 
 	}
 	//Write processed data back
-	cpu_physical_memory_write(j+i,block,32);
+	pci_dma_write(&s->parent_obj,j+i,block,32);
       }
     }
   }
