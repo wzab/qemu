@@ -408,14 +408,14 @@ static int wz_nic1_buffer_full ( WzNic1State *s )
 
 static int wz_nic1_can_receive ( NetClientState *nc )
 {
-    WzNic1State *s = PCI_WZNIC1(nc);
+    WzNic1State *s = qemu_get_nic_opaque(nc);
     if (s->Rx_Enabled==0) return 0;
     return !wz_nic1_buffer_full ( s );
 }
 
 static ssize_t wz_nic1_receive ( NetClientState *nc, const uint8_t *buf, size_t size )
 {
-    WzNic1State *s = PCI_WZNIC1(nc);
+    WzNic1State *s = qemu_get_nic_opaque(nc);
 
     if ( !wz_nic1_can_receive ( nc ) )
         return -1;
@@ -671,7 +671,7 @@ void wz_nic1_update_irq(WzNic1State * s)
 
 static void wz_nic1_cleanup(NetClientState *nc)
 {
-    struct WzNic1State *s = PCI_WZNIC1(nc);
+    struct WzNic1State *s = qemu_get_nic_opaque(nc);
 
     s->nic = NULL;
 }
@@ -699,6 +699,11 @@ static void qdev_pci_wznic1_reset(DeviceState *dev)
     wz_nic1_reset(d);
 }
 
+static Property wznic1_properties[] = {
+    DEFINE_NIC_PROPERTIES(WzNic1State, conf),
+    DEFINE_PROP_END_OF_LIST(),
+};
+
 static void pci_wznic1_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
@@ -709,10 +714,12 @@ static void pci_wznic1_class_init(ObjectClass *klass, void *data)
     k->vendor_id = PCI_VENDOR_ID_WZAB;
     k->device_id = PCI_DEVICE_ID_WZAB_WZNIC1;
     k->revision = 0x00;
-    k->class_id = PCI_CLASS_OTHERS;
+    k->class_id = PCI_CLASS_NETWORK_ETHERNET;
     dc->desc = "PCI demo Ethernet card";
-    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
+    set_bit(DEVICE_CATEGORY_NETWORK, dc->categories);
     dc->reset = qdev_pci_wznic1_reset;
+    dc->vmsd = &vmstate_wz_nic1;
+    dc->props = wznic1_properties;
 }
 
 static const TypeInfo pci_wznic1_info = {
