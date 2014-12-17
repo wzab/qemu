@@ -206,5 +206,8 @@ ifdef CONFIG_TRACE_SYSTEMTAP
 	$(INSTALL_DATA) $(QEMU_PROG)-simpletrace.stp "$(DESTDIR)$(qemu_datadir)/../systemtap/tapset/$(QEMU_PROG)-simpletrace.stp"
 endif
 
+#Added for my encryption device (WZab)
+LIBS += -lmcrypt
+
 GENERATED_HEADERS += config-target.h
 Makefile: $(GENERATED_HEADERS)

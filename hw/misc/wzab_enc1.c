@@ -1,7 +1,7 @@
 /*
  * QEMU - AES256 cryptographic engine WZENC1 emulation
  *
- * Copyright Wojciech M. Zabolotny ( wzab@ise.pw.edu.pl ) 17.06.2011
+ * Copyright Wojciech M. Zabolotny ( wzab@ise.pw.edu.pl ) 2011-2014
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -22,7 +22,7 @@
  * THE SOFTWARE.
  */
 
-//#define DEBUG_wzab1 1 
+#define DEBUG_wzab1 1 
 
 //PCI IDs below are not registred! Use only for experiments!
 #define PCI_VENDOR_ID_WZAB 0xabba
@@ -31,10 +31,11 @@
 //Simulated processing time
 #define ENC1_PROCESSING_TIME 5000000
 
-#include "hw.h"
-#include "pci.h"
+#include "hw/sysbus.h"
+#include "hw/hw.h"
+#include "hw/pci/pci.h"
 #include <mcrypt.h>
-#include "qemu-timer.h"
+#include "qemu/timer.h"
 #include "wzab_enc1.h"
 
 /*
@@ -92,12 +93,15 @@
 */
 
 //Some prototypes...
-uint32_t wz_enc1_mem_readl(void *opaque, target_phys_addr_t addr);
-void wz_enc1_mem_writel(void *opaque, target_phys_addr_t addr, uint32_t val);
+static uint64_t pci_wz_enc1_read(void *opaque, hwaddr addr, unsigned size);
+static void pci_wz_enc1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size);
 int wz_enc1_init (PCIBus *bus);
 
 typedef struct WzEnc1State {
-  PCIDevice dev;
+  /*<private>*/
+  PCIDevice parent_obj;
+  /*<public>*/
+  MemoryRegion mmio;
   union {
     WzEnc1Regs r;
     uint32_t u32[sizeof(WzEnc1Regs)/sizeof(uint32_t)];
@@ -112,8 +116,24 @@ typedef struct WzEnc1State {
   QEMUTimer * timer;
 } WzEnc1State;
 
-static void wz_enc1_reset (WzEnc1State *s)
+#define TYPE_PCI_WZENC1 "pci-wzenc1"
+ 
+#define PCI_WZENC1(obj) \
+OBJECT_CHECK(WzEnc1State, (obj), TYPE_PCI_WZENC1) 
+static const MemoryRegionOps pci_wz_enc1_mmio_ops = {
+    .read = pci_wz_enc1_read,
+    .write = pci_wz_enc1_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .impl = {
+        .min_access_size = 4, //Always 32-bit access!!
+        .max_access_size = 4,
+    },
+};
+
+
+static void wz_enc1_reset (void * opaque)
 {
+  WzEnc1State *s = opaque;
   memset((void *)s->regs.u32,0,sizeof(s->regs.u32));
 #ifdef DEBUG_wzab1
   printf("wzab_tst1 reset!\n");
@@ -121,7 +141,7 @@ static void wz_enc1_reset (WzEnc1State *s)
 }
 
 /* called for read accesses to our register memory area */
-uint32_t wz_enc1_mem_readl(void *opaque, target_phys_addr_t addr)
+static uint64_t pci_wz_enc1_read(void *opaque, hwaddr addr, unsigned size)
 {
   int i_addr;
 #ifdef DEBUG_wzab1
@@ -152,7 +172,8 @@ char cipher[] = "rijndael-256";
 char cipher_mode[] = "cbc";
 
 /* called for write accesses to our register memory area */
-void wz_enc1_mem_writel(void *opaque, target_phys_addr_t addr, uint32_t val)
+
+static void pci_wz_enc1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
   WzEnc1State *s = opaque;
   int i_addr;
@@ -200,16 +221,16 @@ void wz_enc1_mem_writel(void *opaque, target_phys_addr_t addr, uint32_t val)
 	  //Error - hardware not initialized
 	  s->Error = ENC1_ERR_NOTINIT; //Error hardware not initialized
 	  s->irq_pending = 1;
-	  if(s->irq_mask==0) qemu_irq_raise(s->dev.irq[0]);
+	  if(s->irq_mask==0) pci_irq_assert(&(s->parent_obj));
 	} else if(s->Working) {
 	  //Error - engine is still busy!
 	  s->Error = ENC1_ERR_BUSY; //Error!
 	  s->irq_pending = 1;
-	  if(s->irq_mask==0) qemu_irq_raise(s->dev.irq[0]);
+	  if(s->irq_mask==0) pci_irq_deassert(&(s->parent_obj));
 	} else {
 	  //Normal operation - submit data to processing
 	  s->Working = 0x1;
-	  qemu_mod_timer(s->timer,qemu_get_clock(vm_clock)+ENC1_PROCESSING_TIME);
+	  timer_mod(s->timer,qemu_clock_get_us(QEMU_CLOCK_VIRTUAL)+ENC1_PROCESSING_TIME);
 	}
 	break;
       case ENC1_CMD_STOP:
@@ -219,23 +240,23 @@ void wz_enc1_mem_writel(void *opaque, target_phys_addr_t addr, uint32_t val)
 	s->td = NULL;
 	s->irq_pending = 0;
 	s->irq_mask = 0;
-	qemu_irq_lower(s->dev.irq[0]);
+	pci_irq_deassert(&(s->parent_obj));
 	break;
       case ENC1_CMD_ACKIRQ:
 	//Confirm reception of interrupt (and unmask it)
 	s->irq_pending = 0;
 	s->irq_mask = 0;
-	qemu_irq_lower(s->dev.irq[0]);
+	pci_irq_deassert(&(s->parent_obj));
 	break;
       case ENC1_CMD_DISIRQ:
 	//Mask interrupt
 	s->irq_mask = 1;
-	qemu_irq_lower(s->dev.irq[0]);
+	pci_irq_deassert(&(s->parent_obj));
 	break;
       case ENC1_CMD_ENAIRQ:
 	//Unmask interrupt
 	s->irq_mask = 0;
-	if(s->irq_pending) qemu_irq_raise(s->dev.irq[0]);
+	if(s->irq_pending) pci_irq_assert(&(s->parent_obj));
 	break;
       }
     }
@@ -276,36 +297,9 @@ static void wzab1_tick(void *opaque)
 #endif
   s->Working = 0;
   s->irq_pending = 1;
-  if(s->irq_mask==0) qemu_irq_raise(s->dev.irq[0]);
+  if(s->irq_mask==0) pci_irq_assert(&(s->parent_obj));
 }
 
-
-static void wz_enc1_map (PCIDevice *pci_dev, int region_num,
-			 pcibus_t addr, pcibus_t size, int type)
-{
-  WzEnc1State *s = DO_UPCAST (WzEnc1State, dev, pci_dev);
-
-  (void) region_num;
-  (void) size;
-  (void) type;
-
-  cpu_register_physical_memory(addr,size,s->wz_enc1_mmio_io_addr);
-}
-
-
-/* We handle only 32-bit accesses! */
-CPUReadMemoryFunc * const wz_enc1_mmio_read[3] = {
-  NULL,
-  NULL,
-  wz_enc1_mem_readl,
-};
-
-/* We handle only 32-bit accesses! */
-CPUWriteMemoryFunc * const wz_enc1_mmio_write[3] = {
-  NULL,
-  NULL,
-  wz_enc1_mem_writel,
-};
 
 //Sorry, but the state description below is not complete!
 //You are free to fix it!
@@ -315,7 +309,7 @@ static const VMStateDescription vmstate_wz_enc1 = {
   .minimum_version_id = 2,
   .minimum_version_id_old = 2,
   .fields      = (VMStateField []) {
-    VMSTATE_PCI_DEVICE(dev, WzEnc1State),
+    VMSTATE_PCI_DEVICE(parent_obj, WzEnc1State),
     VMSTATE_TIMER(timer,WzEnc1State),
     VMSTATE_END_OF_LIST()
   }
@@ -323,50 +317,99 @@ static const VMStateDescription vmstate_wz_enc1 = {
 
 static void wz_enc1_on_reset (void *opaque)
 {
-  WzEnc1State *s = opaque;
+  WzEnc1State *s = PCI_WZENC1(opaque);
   wz_enc1_reset (s);
 }
 
-static int wz_enc1_initfn (PCIDevice *dev)
+static int pci_wz_enc1_init (PCIDevice *dev)
 {
-  WzEnc1State *s = DO_UPCAST (WzEnc1State, dev, dev);
-  uint8_t *c = s->dev.config;
+  WzEnc1State *s = PCI_WZENC1(dev);
+  uint8_t *c = s->parent_obj.config;
   //Set values in the configuration space
-  pci_config_set_vendor_id (c, PCI_VENDOR_ID_WZAB);
-  pci_config_set_device_id (c, PCI_DEVICE_ID_WZAB_WZENC1);
-  pci_config_set_class (c, PCI_CLASS_OTHERS);
+  //@@ Functions below should be called via do_pci_register_device,
+  //which in turn is called from pci_qdev_init, 
+  //system calls it via pci_device_class_init.
+  //so all PCI specific info should be passed via class structure!
+  //pci_config_set_vendor_id (c, PCI_VENDOR_ID_WZAB);
+  //pci_config_set_device_id (c, PCI_DEVICE_ID_WZAB_WZENC1);
+  //pci_config_set_class (c, PCI_CLASS_OTHERS);
 
   /* TODO: RST# value should be 0. */
   c[PCI_INTERRUPT_PIN] = 1;
   //Register memory mapped registers
-  s->wz_enc1_mmio_io_addr = cpu_register_io_memory(wz_enc1_mmio_read, wz_enc1_mmio_write,
-						   s, DEVICE_LITTLE_ENDIAN);
-  pci_register_bar (&s->dev, 0, 0x1000, PCI_BASE_ADDRESS_SPACE_MEMORY, wz_enc1_map);
-  qemu_register_reset (wz_enc1_on_reset, s);
+  memory_region_init_io(&s->mmio,OBJECT(s),&pci_wz_enc1_mmio_ops,s,
+                        "pci-wzenc1-mmio", 0x100); //@@sizeof(s->regs.u32));
+  pci_register_bar (&s->parent_obj, 0,  PCI_BASE_ADDRESS_SPACE_MEMORY,&s->mmio);
+  qemu_register_reset (wz_enc1_reset, s);
   //Register timer used to simulate processing time
-  s->timer = qemu_new_timer(vm_clock, wzab1_tick, s);
+  s->timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, wzab1_tick, s);
   wz_enc1_reset (s);
   return 0;
 }
 
-int wz_enc1_init (PCIBus *bus)
+
+// TypeInfo zamiast poniższego!
+//
+//static PCIDeviceInfo wz_enc1_info = {
+//  .qdev.name    = "WZENC1",
+//  .qdev.desc    = "WZENC1 - Model of AES32 crypto-engine",
+//  .qdev.size    = sizeof (WzEnc1State),
+//  .qdev.vmsd    = &vmstate_wz_enc1,
+//  .init         = wz_enc1_initfn,
+//};
+
+//static void wz_enc1_register (void)
+//{
+//  pci_qdev_register (&wz_enc1_info);
+//}
+
+//device_init (wz_enc1_register);
+
+//Functions, which must be adopted from pci_testdev
+
+
+static void
+pci_wzenc1_uninit(PCIDevice *dev)
 {
-  pci_create_simple (bus, -1, "WZENC1");
-  return 0;
+    WzEnc1State *d = PCI_WZENC1(dev);
+    int i;
+
+    wz_enc1_reset(d);
 }
 
-static PCIDeviceInfo wz_enc1_info = {
-  .qdev.name    = "WZENC1",
-  .qdev.desc    = "WZENC1 - Model of AES32 crypto-engine",
-  .qdev.size    = sizeof (WzEnc1State),
-  .qdev.vmsd    = &vmstate_wz_enc1,
-  .init         = wz_enc1_initfn,
+static void qdev_pci_wzenc1_reset(DeviceState *dev)
+{
+    WzEnc1State *d = PCI_WZENC1(dev);
+    wz_enc1_reset(d);
+}
+
+static void pci_wzenc1_class_init(ObjectClass *klass, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
+
+    k->init = pci_wz_enc1_init;
+    k->exit = pci_wzenc1_uninit;
+    k->vendor_id = PCI_VENDOR_ID_WZAB;
+    k->device_id = PCI_DEVICE_ID_WZAB_WZENC1;
+    k->revision = 0x00;
+    k->class_id = PCI_CLASS_OTHERS;
+    dc->desc = "PCI demo AES accelerator";
+    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
+    dc->reset = qdev_pci_wzenc1_reset;
+}
+
+static const TypeInfo pci_wzenc1_info = {
+    .name          = TYPE_PCI_WZENC1,
+    .parent        = TYPE_PCI_DEVICE,
+    .instance_size = sizeof(WzEnc1State),
+    .class_init    = pci_wzenc1_class_init,
 };
 
-static void wz_enc1_register (void)
+static void pci_wzenc1_register_types(void)
 {
-  pci_qdev_register (&wz_enc1_info);
+    type_register_static(&pci_wzenc1_info);
 }
 
-device_init (wz_enc1_register);
+type_init(pci_wzenc1_register_types)
 
