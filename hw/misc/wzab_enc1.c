@@ -207,8 +207,8 @@ static void pci_wz_enc1_write(void *opaque, hwaddr addr, uint64_t val, unsigned 
 	} else {
 	  s->enc_ndec = 0; //We will decrypt data
 	}
-        cpu_physical_memory_read(s->regs.r.Pages[0].PhysAddr,key,32);
-        cpu_physical_memory_read(s->regs.r.Pages[1].PhysAddr,iv,32);
+        pci_dma_read(&s->parent_obj,s->regs.r.Pages[0].PhysAddr,key,32);
+        pci_dma_read(&s->parent_obj,s->regs.r.Pages[1].PhysAddr,iv,32);
 	if(mcrypt_generic_init(s->td,(void*)key,32,(void*)iv)<0){
 	  printf("Initialization B of mcrypt impossible!\n");
 	  exit(1);
