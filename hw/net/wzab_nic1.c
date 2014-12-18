@@ -117,7 +117,7 @@ unsigned int promiscous :
 //Some prototypes...
 static uint64_t pci_wz_nic1_read ( void *opaque, hwaddr addr, unsigned size );
 static void pci_wz_nic1_write ( void *opaque, hwaddr addr, uint64_t val, unsigned size );
-static int wz_nic1_init ( PCIDevice *dev );
+static int pci_wz_nic1_init ( PCIDevice *dev );
 void wz_nic1_send_packets ( WzNic1State * s );
 void wz_nic1_update_irq(WzNic1State * s);
 static NetClientInfo wz_nic1_nc_info;
