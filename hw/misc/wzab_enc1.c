@@ -354,13 +354,13 @@ pci_wzenc1_uninit(PCIDevice *dev)
     int i;
 
     wz_enc1_reset(d);
+    timer_free(d->timer);
 }
 
 static void qdev_pci_wzenc1_reset(DeviceState *dev)
 {
     WzEnc1State *d = PCI_WZENC1(dev);
     wz_enc1_reset(d);
-    timer_free(d->timer);
 }
 
 static void pci_wzenc1_class_init(ObjectClass *klass, void *data)
