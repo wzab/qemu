@@ -347,27 +347,6 @@ static int pci_wz_enc1_init (PCIDevice *dev)
   return 0;
 }
 
-
-// TypeInfo zamiast poniższego!
-//
-//static PCIDeviceInfo wz_enc1_info = {
-//  .qdev.name    = "WZENC1",
-//  .qdev.desc    = "WZENC1 - Model of AES32 crypto-engine",
-//  .qdev.size    = sizeof (WzEnc1State),
-//  .qdev.vmsd    = &vmstate_wz_enc1,
-//  .init         = wz_enc1_initfn,
-//};
-
-//static void wz_enc1_register (void)
-//{
-//  pci_qdev_register (&wz_enc1_info);
-//}
-
-//device_init (wz_enc1_register);
-
-//Functions, which must be adopted from pci_testdev
-
-
 static void
 pci_wzenc1_uninit(PCIDevice *dev)
 {
@@ -381,6 +360,7 @@ static void qdev_pci_wzenc1_reset(DeviceState *dev)
 {
     WzEnc1State *d = PCI_WZENC1(dev);
     wz_enc1_reset(d);
+    timer_free(d->timer);
 }
 
 static void pci_wzenc1_class_init(ObjectClass *klass, void *data)

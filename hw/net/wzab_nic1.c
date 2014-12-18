@@ -689,8 +689,8 @@ pci_wz_nic1_uninit(PCIDevice *dev)
 {
     WzNic1State *d = PCI_WZNIC1(dev);
     int i;
-
     wz_nic1_reset(d);
+    timer_free(d->timer);
 }
 
 static void qdev_pci_wznic1_reset(DeviceState *dev)

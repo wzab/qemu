@@ -286,6 +286,7 @@ pci_wz_adc1_uninit(PCIDevice *dev)
 {
     WzAdc1State *d = PCI_WZADC1(dev);
     wz_adc1_reset(d);
+    timer_free(d->timer);
 }
 
 static void qdev_pci_wz_adc1_reset(DeviceState *dev)
