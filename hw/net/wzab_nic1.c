@@ -574,7 +574,7 @@ static void pci_wz_nic1_write ( void *opaque, hwaddr addr, uint64_t val, unsigne
 /* The procedure below performs the real encryption, after simulated processing time is expired */
 static void wzab1_tick ( void *opaque )
 {
-    WzNic1State * s = opaque;
+    //WzNic1State * s = opaque;
     //Encrypt the data
     {
     }
@@ -688,7 +688,6 @@ static void
 pci_wz_nic1_uninit(PCIDevice *dev)
 {
     WzNic1State *d = PCI_WZNIC1(dev);
-    int i;
     wz_nic1_reset(d);
     timer_free(d->timer);
 }
