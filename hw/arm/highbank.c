@@ -241,13 +241,25 @@ static void calxeda_init(MachineState *machine, enum cxmachines machine_id)
         cpuobj = object_new(object_class_get_name(oc));
         cpu = ARM_CPU(cpuobj);
 
+        /* By default A9 and A15 CPUs have EL3 enabled.  This board does not
+         * currently support EL3 so the CPU EL3 property is disabled before
+         * realization.
+         */
+        if (object_property_find(cpuobj, "has_el3", NULL)) {
+            object_property_set_bool(cpuobj, false, "has_el3", &err);
+            if (err) {
+                error_report_err(err);
+                exit(1);
+            }
+        }
+
         if (object_property_find(cpuobj, "reset-cbar", NULL)) {
             object_property_set_int(cpuobj, MPCORE_PERIPHBASE,
                                     "reset-cbar", &error_abort);
         }
         object_property_set_bool(cpuobj, true, "realized", &err);
         if (err) {
-            error_report("%s", error_get_pretty(err));
+            error_report_err(err);
             exit(1);
         }
         cpu_irq[n] = qdev_get_gpio_in(DEVICE(cpu), ARM_CPU_IRQ);
@@ -270,6 +282,7 @@ static void calxeda_init(MachineState *machine, enum cxmachines machine_id)
             if (load_image_targphys("sysram.bin", 0xfff88000, filesize) < 0) {
                 hw_error("Unable to load %s\n", bios_name);
             }
+            g_free(sysboot_filename);
         } else {
            hw_error("Unable to find %s\n", bios_name);
         }

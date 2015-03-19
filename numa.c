@@ -22,7 +22,7 @@
  * THE SOFTWARE.
  */
 
-#include "sysemu/sysemu.h"
+#include "sysemu/numa.h"
 #include "exec/cpu-common.h"
 #include "qemu/bitmap.h"
 #include "qom/cpu.h"
@@ -36,6 +36,8 @@
 #include "sysemu/hostmem.h"
 #include "qmp-commands.h"
 #include "hw/mem/pc-dimm.h"
+#include "qemu/option.h"
+#include "qemu/config-file.h"
 
 QemuOptsList qemu_numa_opts = {
     .name = "numa",
@@ -45,6 +47,11 @@ QemuOptsList qemu_numa_opts = {
 };
 
 static int have_memdevs = -1;
+static int max_numa_nodeid; /* Highest specified NUMA node ID, plus one.
+                             * For all nodes, nodeid < max_numa_nodeid
+                             */
+int nb_numa_nodes;
+NodeInfo numa_info[MAX_NODES];
 
 static void numa_node_parse(NumaNodeOptions *node, QemuOpts *opts, Error **errp)
 {
@@ -59,7 +66,7 @@ static void numa_node_parse(NumaNodeOptions *node, QemuOpts *opts, Error **errp)
 
     if (nodenr >= MAX_NODES) {
         error_setg(errp, "Max number of NUMA nodes reached: %"
-                   PRIu16 "\n", nodenr);
+                   PRIu16 "", nodenr);
         return;
     }
 
@@ -78,7 +85,7 @@ static void numa_node_parse(NumaNodeOptions *node, QemuOpts *opts, Error **errp)
     }
 
     if (node->has_mem && node->has_memdev) {
-        error_setg(errp, "qemu: cannot specify both mem= and memdev=\n");
+        error_setg(errp, "qemu: cannot specify both mem= and memdev=");
         return;
     }
 
@@ -87,7 +94,7 @@ static void numa_node_parse(NumaNodeOptions *node, QemuOpts *opts, Error **errp)
     }
     if (node->has_memdev != have_memdevs) {
         error_setg(errp, "qemu: memdev option must be specified for either "
-                   "all or no nodes\n");
+                   "all or no nodes");
         return;
     }
 
@@ -116,7 +123,7 @@ static void numa_node_parse(NumaNodeOptions *node, QemuOpts *opts, Error **errp)
     max_numa_nodeid = MAX(max_numa_nodeid, nodenr + 1);
 }
 
-int numa_init_func(QemuOpts *opts, void *opaque)
+static int parse_numa(QemuOpts *opts, void *opaque)
 {
     NumaOptions *object = NULL;
     Error *err = NULL;
@@ -146,8 +153,7 @@ int numa_init_func(QemuOpts *opts, void *opaque)
     return 0;
 
 error:
-    qerror_report_err(err);
-    error_free(err);
+    error_report_err(err);
 
     if (object) {
         QapiDeallocVisitor *dv = qapi_dealloc_visitor_new();
@@ -159,9 +165,14 @@ error:
     return -1;
 }
 
-void set_numa_nodes(void)
+void parse_numa_opts(void)
 {
     int i;
+
+    if (qemu_opts_foreach(qemu_find_opts("numa"), parse_numa,
+                          NULL, 1) != 0) {
+        exit(1);
+    }
 
     assert(max_numa_nodeid <= MAX_NODES);
 
@@ -234,7 +245,7 @@ void set_numa_nodes(void)
     }
 }
 
-void set_numa_modes(void)
+void numa_post_machine_init(void)
 {
     CPUState *cpu;
     int i;
@@ -262,8 +273,7 @@ static void allocate_system_memory_nonnuma(MemoryRegion *mr, Object *owner,
          * regular RAM allocation.
          */
         if (err) {
-            qerror_report_err(err);
-            error_free(err);
+            error_report_err(err);
             memory_region_init_ram(mr, owner, name, ram_size, &error_abort);
         }
 #else
@@ -298,7 +308,7 @@ void memory_region_allocate_system_memory(MemoryRegion *mr, Object *owner,
         }
         MemoryRegion *seg = host_memory_backend_get_memory(backend, &local_err);
         if (local_err) {
-            qerror_report_err(local_err);
+            error_report_err(local_err);
             exit(1);
         }
 
