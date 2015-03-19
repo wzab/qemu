@@ -30,7 +30,7 @@
 
 //Simulated processing time
 #define ENC1_PROCESSING_TIME 5000000
-
+#include <inttypes.h>
 #include "hw/sysbus.h"
 #include "hw/hw.h"
 #include "hw/pci/pci.h"
@@ -178,7 +178,7 @@ static void pci_wz_enc1_write(void *opaque, hwaddr addr, uint64_t val, unsigned 
   WzEnc1State *s = opaque;
   int i_addr;
 #ifdef DEBUG_wzab1  
-  printf("wzab1: zapis pod adres = 0x%08x, 0x%08x\n", (unsigned int) addr, val);
+  printf("wzab1: zapis pod adres = 0x%016" PRIu64 " , 0x%016" PRIu64 "\n", (uint64_t) addr, val);
 #endif
   /* Check which register is accessed */
   if(addr>=sizeof(WzEnc1Regs)){
@@ -315,11 +315,13 @@ static const VMStateDescription vmstate_wz_enc1 = {
   }
 };
 
+/*
 static void wz_enc1_on_reset (void *opaque)
 {
   WzEnc1State *s = PCI_WZENC1(opaque);
   wz_enc1_reset (s);
 }
+*/
 
 static int pci_wz_enc1_init (PCIDevice *dev)
 {
@@ -351,7 +353,6 @@ static void
 pci_wzenc1_uninit(PCIDevice *dev)
 {
     WzEnc1State *d = PCI_WZENC1(dev);
-    int i;
 
     wz_enc1_reset(d);
     timer_free(d->timer);

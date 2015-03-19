@@ -69,6 +69,7 @@
 #define PCI_VENDOR_ID_WZAB 0xabba
 #define PCI_DEVICE_ID_WZAB_WZADC1 0x0133
 
+#include <inttypes.h>
 #include "hw/sysbus.h"
 #include "hw/hw.h"
 #include "hw/pci/pci.h"
@@ -109,7 +110,6 @@ static const MemoryRegionOps pci_wz_adc1_mmio_ops = {
 
 static void wz_adc1_reset (void * opaque)
 {
-  size_t i;
   WzAdc1State *s = opaque;
   memset(s->regs,0,sizeof(s->regs));
 #ifdef DEBUG_wzab1
@@ -121,7 +121,7 @@ static void wz_adc1_reset (void * opaque)
 static uint64_t pci_wz_adc1_read(void *opaque, hwaddr addr, unsigned size)
 {
 #ifdef DEBUG_wzab1
-  printf("Memory read: address %x ", addr);
+  printf("Memory read: address %" PRIu64 "\n", (uint64_t) addr);
 #endif
   WzAdc1State *s = opaque;
   uint32_t ret=0xbada4ea; //Special value returned when accessed non-existing register
@@ -157,7 +157,7 @@ void pci_wz_adc1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
   WzAdc1State *s = opaque;
 #ifdef DEBUG_wzab1  
-  printf("wzab1: zapis pod adres = 0x%08x, 0x%08x\n", addr, val);
+  printf("wzab1: zapis pod adres = 0x%016" PRIu64 ", 0x%016" PRIu64 "\n", addr, val);
 #endif
   /* convert to wzab1 memory offset */
   addr = (addr/4) & 0xff;
