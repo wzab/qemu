@@ -595,7 +595,7 @@ static const VMStateDescription vmstate_wz_nic1 =
     .fields      = ( VMStateField [] )
     {
         VMSTATE_PCI_DEVICE ( parent_obj, WzNic1State ),
-        VMSTATE_TIMER ( timer,WzNic1State ),
+        VMSTATE_TIMER_PTR ( timer,WzNic1State ),
         VMSTATE_END_OF_LIST()
     }
 };

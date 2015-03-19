@@ -253,7 +253,7 @@ static const VMStateDescription vmstate_wz_adc1 = {
   //.post_load = wz_adc1_post_load,
   .fields      = (VMStateField []) {
     VMSTATE_PCI_DEVICE(parent_obj, WzAdc1State),
-    VMSTATE_TIMER(timer,WzAdc1State),
+    VMSTATE_TIMER_PTR(timer,WzAdc1State),
     VMSTATE_END_OF_LIST()
   }
 };
