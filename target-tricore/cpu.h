@@ -25,8 +25,6 @@
 #include "exec/cpu-defs.h"
 #include "fpu/softfloat.h"
 
-#define ELF_MACHINE     EM_TRICORE
-
 #define CPUArchState struct CPUTriCoreState
 
 struct CPUTriCoreState;
@@ -254,6 +252,7 @@ enum tricore_features {
     TRICORE_FEATURE_13,
     TRICORE_FEATURE_131,
     TRICORE_FEATURE_16,
+    TRICORE_FEATURE_161,
 };
 
 static inline int tricore_feature(CPUTriCoreState *env, int feature)
@@ -349,7 +348,7 @@ void tricore_cpu_list(FILE *f, fprintf_function cpu_fprintf);
 #define cpu_signal_handler cpu_tricore_signal_handler
 #define cpu_list tricore_cpu_list
 
-static inline int cpu_mmu_index(CPUTriCoreState *env)
+static inline int cpu_mmu_index(CPUTriCoreState *env, bool ifetch)
 {
     return 0;
 }
@@ -371,7 +370,7 @@ enum {
 };
 
 void cpu_state_reset(CPUTriCoreState *s);
-int cpu_tricore_exec(CPUTriCoreState *s);
+int cpu_tricore_exec(CPUState *cpu);
 void tricore_tcg_init(void);
 int cpu_tricore_signal_handler(int host_signum, void *pinfo, void *puc);
 
@@ -394,10 +393,5 @@ int cpu_tricore_handle_mmu_fault(CPUState *cpu, target_ulong address,
 #define cpu_handle_mmu_fault cpu_tricore_handle_mmu_fault
 
 #include "exec/exec-all.h"
-
-static inline void cpu_pc_from_tb(CPUTriCoreState *env, TranslationBlock *tb)
-{
-    env->PC = tb->pc;
-}
 
 #endif /*__TRICORE_CPU_H__ */

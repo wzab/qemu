@@ -20,6 +20,7 @@
 
 #include "qemu/iov.h"
 #include "monitor/monitor.h"
+#include "qemu/error-report.h"
 #include "qemu/queue.h"
 #include "hw/sysbus.h"
 #include "trace.h"
@@ -75,7 +76,7 @@ static VirtIOSerialPort *find_port_by_name(char *name)
 static bool use_multiport(VirtIOSerial *vser)
 {
     VirtIODevice *vdev = VIRTIO_DEVICE(vser);
-    return virtio_has_feature(vdev, VIRTIO_CONSOLE_F_MULTIPORT);
+    return virtio_vdev_has_feature(vdev, VIRTIO_CONSOLE_F_MULTIPORT);
 }
 
 static size_t write_to_port(VirtIOSerialPort *port,
@@ -194,7 +195,8 @@ static size_t send_control_msg(VirtIOSerial *vser, void *buf, size_t len)
         return 0;
     }
 
-    memcpy(elem.in_sg[0].iov_base, buf, len);
+    /* TODO: detect a buffer that's too short, set NEEDS_RESET */
+    iov_from_buf(elem.in_sg, elem.in_num, 0, buf, len);
 
     virtqueue_push(vq, &elem, len);
     virtio_notify(VIRTIO_DEVICE(vser), vq);
@@ -498,7 +500,8 @@ static void handle_input(VirtIODevice *vdev, VirtQueue *vq)
     }
 }
 
-static uint32_t get_features(VirtIODevice *vdev, uint32_t features)
+static uint64_t get_features(VirtIODevice *vdev, uint64_t features,
+                             Error **errp)
 {
     VirtIOSerial *vser;
 
@@ -702,10 +705,7 @@ static int fetch_active_ports_list(QEMUFile *f, int version_id,
 
                 qemu_get_buffer(f, (unsigned char *)&port->elem,
                                 sizeof(port->elem));
-                virtqueue_map_sg(port->elem.in_sg, port->elem.in_addr,
-                                 port->elem.in_num, 1);
-                virtqueue_map_sg(port->elem.out_sg, port->elem.out_addr,
-                                 port->elem.out_num, 1);
+                virtqueue_map(&port->elem);
 
                 /*
                  *  Port was throttled on source machine.  Let's
@@ -814,12 +814,12 @@ static uint32_t find_free_port_id(VirtIOSerial *vser)
 
     max_nr_ports = vser->serial.max_virtserial_ports;
     for (i = 0; i < (max_nr_ports + 31) / 32; i++) {
-        uint32_t map, bit;
+        uint32_t map, zeroes;
 
         map = vser->ports_map[i];
-        bit = ffs(~map);
-        if (bit) {
-            return (bit - 1) + i * 32;
+        zeroes = ctz32(~map);
+        if (zeroes != 32) {
+            return zeroes + i * 32;
         }
     }
     return VIRTIO_CONSOLE_BAD_ID;
@@ -973,15 +973,17 @@ static void virtio_serial_device_realize(DeviceState *dev, Error **errp)
     }
 
     /* Each port takes 2 queues, and one pair is for the control queue */
-    max_supported_ports = VIRTIO_PCI_QUEUE_MAX / 2 - 1;
+    max_supported_ports = VIRTIO_QUEUE_MAX / 2 - 1;
 
     if (vser->serial.max_virtserial_ports > max_supported_ports) {
         error_setg(errp, "maximum ports supported: %u", max_supported_ports);
         return;
     }
 
+    /* We don't support emergency write, skip it for now. */
+    /* TODO: cleaner fix, depending on host features. */
     virtio_init(vdev, "virtio-serial", VIRTIO_ID_CONSOLE,
-                sizeof(struct virtio_console_config));
+                offsetof(struct virtio_console_config, emerg_wr));
 
     /* Spawn a new virtio-serial bus on which the ports will ride as devices */
     qbus_create_inplace(&vser->bus, sizeof(vser->bus), TYPE_VIRTIO_SERIAL_BUS,
@@ -1081,7 +1083,8 @@ static void virtio_serial_device_unrealize(DeviceState *dev, Error **errp)
 }
 
 static Property virtio_serial_properties[] = {
-    DEFINE_VIRTIO_SERIAL_PROPERTIES(VirtIOSerial, serial),
+    DEFINE_PROP_UINT32("max_ports", VirtIOSerial, serial.max_virtserial_ports,
+                                                  31),
     DEFINE_PROP_END_OF_LIST(),
 };
 

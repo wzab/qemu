@@ -1556,9 +1556,9 @@ static void openpic_realize(DeviceState *dev, Error **errp)
     };
 
     if (opp->nb_cpus > MAX_CPU) {
-        error_set(errp, QERR_PROPERTY_VALUE_OUT_OF_RANGE,
-                  TYPE_OPENPIC, "nb_cpus", (uint64_t)opp->nb_cpus,
-                  (uint64_t)0, (uint64_t)MAX_CPU);
+        error_setg(errp, QERR_PROPERTY_VALUE_OUT_OF_RANGE,
+                   TYPE_OPENPIC, "nb_cpus", (uint64_t)opp->nb_cpus,
+                   (uint64_t)0, (uint64_t)MAX_CPU);
         return;
     }
 
@@ -1643,6 +1643,7 @@ static void openpic_class_init(ObjectClass *oc, void *data)
     dc->props = openpic_properties;
     dc->reset = openpic_reset;
     dc->vmsd = &vmstate_openpic;
+    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
 }
 
 static const TypeInfo openpic_info = {

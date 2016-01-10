@@ -488,10 +488,10 @@ static inline int vmsvga_fill_rect(struct vmsvga_state_s *s,
 #endif
 
 struct vmsvga_cursor_definition_s {
-    int width;
-    int height;
+    uint32_t width;
+    uint32_t height;
     int id;
-    int bpp;
+    uint32_t bpp;
     int hot_x;
     int hot_y;
     uint32_t mask[1024];
@@ -658,7 +658,10 @@ static void vmsvga_fifo_run(struct vmsvga_state_s *s)
             cursor.bpp = vmsvga_fifo_read(s);
 
             args = SVGA_BITMAP_SIZE(x, y) + SVGA_PIXMAP_SIZE(x, y, cursor.bpp);
-            if (SVGA_BITMAP_SIZE(x, y) > sizeof cursor.mask ||
+            if (cursor.width > 256 ||
+                cursor.height > 256 ||
+                cursor.bpp > 32 ||
+                SVGA_BITMAP_SIZE(x, y) > sizeof cursor.mask ||
                 SVGA_PIXMAP_SIZE(x, y, cursor.bpp) > sizeof cursor.image) {
                     goto badcmd;
             }
@@ -1124,7 +1127,7 @@ static void vmsvga_update_display(void *opaque)
      * Is it more efficient to look at vram VGA-dirty bits or wait
      * for the driver to issue SVGA_CMD_UPDATE?
      */
-    if (memory_region_is_logging(&s->vga.vram)) {
+    if (memory_region_is_logging(&s->vga.vram, DIRTY_MEMORY_VGA)) {
         vga_sync_dirty_bitmap(&s->vga);
         dirty = memory_region_get_dirty(&s->vga.vram, 0,
             surface_stride(surface) * surface_height(surface),
@@ -1244,7 +1247,7 @@ static void vmsvga_init(DeviceState *dev, struct vmsvga_state_s *s,
 
     s->fifo_size = SVGA_FIFO_SIZE;
     memory_region_init_ram(&s->fifo_ram, NULL, "vmsvga.fifo", s->fifo_size,
-                           &error_abort);
+                           &error_fatal);
     vmstate_register_ram_global(&s->fifo_ram);
     s->fifo_ptr = memory_region_get_ram_ptr(&s->fifo_ram);
 

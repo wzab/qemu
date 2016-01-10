@@ -226,9 +226,8 @@ static void versatile_init(MachineState *machine, int board_id)
 
     cpu = ARM_CPU(cpuobj);
 
-    memory_region_init_ram(ram, NULL, "versatile.ram", machine->ram_size,
-                           &error_abort);
-    vmstate_register_ram_global(ram);
+    memory_region_allocate_system_memory(ram, NULL, "versatile.ram",
+                                         machine->ram_size);
     /* ??? RAM should repeat to fill physical memory space.  */
     /* SDRAM at address zero.  */
     memory_region_add_subregion(sysmem, 0, ram);
@@ -392,27 +391,43 @@ static void vab_init(MachineState *machine)
     versatile_init(machine, 0x25e);
 }
 
-static QEMUMachine versatilepb_machine = {
-    .name = "versatilepb",
-    .desc = "ARM Versatile/PB (ARM926EJ-S)",
-    .init = vpb_init,
-    .block_default_type = IF_SCSI,
+static void versatilepb_class_init(ObjectClass *oc, void *data)
+{
+    MachineClass *mc = MACHINE_CLASS(oc);
+
+    mc->desc = "ARM Versatile/PB (ARM926EJ-S)";
+    mc->init = vpb_init;
+    mc->block_default_type = IF_SCSI;
+}
+
+static const TypeInfo versatilepb_type = {
+    .name = MACHINE_TYPE_NAME("versatilepb"),
+    .parent = TYPE_MACHINE,
+    .class_init = versatilepb_class_init,
 };
 
-static QEMUMachine versatileab_machine = {
-    .name = "versatileab",
-    .desc = "ARM Versatile/AB (ARM926EJ-S)",
-    .init = vab_init,
-    .block_default_type = IF_SCSI,
+static void versatileab_class_init(ObjectClass *oc, void *data)
+{
+    MachineClass *mc = MACHINE_CLASS(oc);
+
+    mc->desc = "ARM Versatile/AB (ARM926EJ-S)";
+    mc->init = vab_init;
+    mc->block_default_type = IF_SCSI;
+}
+
+static const TypeInfo versatileab_type = {
+    .name = MACHINE_TYPE_NAME("versatileab"),
+    .parent = TYPE_MACHINE,
+    .class_init = versatileab_class_init,
 };
 
 static void versatile_machine_init(void)
 {
-    qemu_register_machine(&versatilepb_machine);
-    qemu_register_machine(&versatileab_machine);
+    type_register_static(&versatilepb_type);
+    type_register_static(&versatileab_type);
 }
 
-machine_init(versatile_machine_init);
+machine_init(versatile_machine_init)
 
 static void vpb_sic_class_init(ObjectClass *klass, void *data)
 {

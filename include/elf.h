@@ -133,6 +133,11 @@ typedef int64_t  Elf64_Sxword;
 
 #define EM_AARCH64  183
 
+#define EM_TILEGX   191 /* TILE-Gx */
+
+#define EM_MOXIE           223     /* Moxie processor family */
+#define EM_MOXIE_OLD       0xFEED
+
 /* This is the info that is needed to parse the dynamic section of the file */
 #define DT_NULL		0
 #define DT_NEEDED	1
@@ -1456,6 +1461,8 @@ typedef struct elf64_shdr {
 #define NT_TASKSTRUCT	4
 #define NT_AUXV		6
 #define NT_PRXFPREG     0x46e62b7f      /* copied from gdb5.1/include/elf/common.h */
+#define NT_S390_VXRS_HIGH 0x30a         /* s390 vector registers 16-31 */
+#define NT_S390_VXRS_LOW  0x309         /* s390 vector registers 0-15 (lower half) */
 #define NT_S390_PREFIX  0x305           /* s390 prefix register */
 #define NT_S390_CTRS    0x304           /* s390 control registers */
 #define NT_S390_TODPREG 0x303           /* s390 TOD programmable register */

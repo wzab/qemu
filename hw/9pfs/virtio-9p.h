@@ -13,7 +13,7 @@
 #include "fsdev/file-op-9p.h"
 #include "fsdev/virtio-9p-marshal.h"
 #include "qemu/thread.h"
-#include "block/coroutine.h"
+#include "qemu/coroutine.h"
 
 enum {
     P9_TLERROR = 6,
@@ -390,9 +390,5 @@ extern int v9fs_name_to_path(V9fsState *s, V9fsPath *dirpath,
 #define TYPE_VIRTIO_9P "virtio-9p-device"
 #define VIRTIO_9P(obj) \
         OBJECT_CHECK(V9fsState, (obj), TYPE_VIRTIO_9P)
-
-#define DEFINE_VIRTIO_9P_PROPERTIES(_state, _field)             \
-        DEFINE_PROP_STRING("mount_tag", _state, _field.tag),    \
-        DEFINE_PROP_STRING("fsdev", _state, _field.fsdev_id)
 
 #endif

@@ -87,7 +87,7 @@ static int64_t load_kernel(void)
     kernel_size = load_elf(loaderparams.kernel_filename, cpu_mips_kseg0_to_phys,
                            NULL, (uint64_t *)&entry, NULL,
                            (uint64_t *)&kernel_high, big_endian,
-                           ELF_MACHINE, 1);
+                           EM_MIPS, 1);
     if (kernel_size >= 0) {
         if ((entry & ~0x7fffffffULL) == 0x80000000)
             entry = (int32_t)entry;
@@ -139,6 +139,7 @@ static int64_t load_kernel(void)
     rom_add_blob_fixed("params", params_buf, params_size,
                        (16 << 20) - 264);
 
+    g_free(params_buf);
     return entry;
 }
 
@@ -205,8 +206,7 @@ void mips_r4k_init(MachineState *machine)
                 ((unsigned int)ram_size / (1 << 20)));
         exit(1);
     }
-    memory_region_init_ram(ram, NULL, "mips_r4k.ram", ram_size, &error_abort);
-    vmstate_register_ram_global(ram);
+    memory_region_allocate_system_memory(ram, NULL, "mips_r4k.ram", ram_size);
 
     memory_region_add_subregion(address_space_mem, 0, ram);
 
@@ -233,7 +233,7 @@ void mips_r4k_init(MachineState *machine)
     if ((bios_size > 0) && (bios_size <= BIOS_SIZE)) {
         bios = g_new(MemoryRegion, 1);
         memory_region_init_ram(bios, NULL, "mips_r4k.bios", BIOS_SIZE,
-                               &error_abort);
+                               &error_fatal);
         vmstate_register_ram_global(bios);
         memory_region_set_readonly(bios, true);
         memory_region_add_subregion(get_system_memory(), 0x1fc00000, bios);
@@ -252,9 +252,7 @@ void mips_r4k_init(MachineState *machine)
         fprintf(stderr, "qemu: Warning, could not load MIPS bios '%s'\n",
 		bios_name);
     }
-    if (filename) {
-        g_free(filename);
-    }
+    g_free(filename);
 
     if (kernel_filename) {
         loaderparams.ram_size = ram_size;
@@ -300,15 +298,10 @@ void mips_r4k_init(MachineState *machine)
     isa_create_simple(isa_bus, "i8042");
 }
 
-static QEMUMachine mips_machine = {
-    .name = "mips",
-    .desc = "mips r4k platform",
-    .init = mips_r4k_init,
-};
-
-static void mips_machine_init(void)
+static void mips_machine_init(MachineClass *mc)
 {
-    qemu_register_machine(&mips_machine);
+    mc->desc = "mips r4k platform";
+    mc->init = mips_r4k_init;
 }
 
-machine_init(mips_machine_init);
+DEFINE_MACHINE("mips", mips_machine_init)

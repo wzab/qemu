@@ -465,12 +465,12 @@ static void sdl_mouse_mode_change(Notifier *notify, void *data)
 
 static void sdl_send_mouse_event(int dx, int dy, int x, int y, int state)
 {
-    static uint32_t bmap[INPUT_BUTTON_MAX] = {
+    static uint32_t bmap[INPUT_BUTTON__MAX] = {
         [INPUT_BUTTON_LEFT]       = SDL_BUTTON(SDL_BUTTON_LEFT),
         [INPUT_BUTTON_MIDDLE]     = SDL_BUTTON(SDL_BUTTON_MIDDLE),
         [INPUT_BUTTON_RIGHT]      = SDL_BUTTON(SDL_BUTTON_RIGHT),
-        [INPUT_BUTTON_WHEEL_UP]   = SDL_BUTTON(SDL_BUTTON_WHEELUP),
-        [INPUT_BUTTON_WHEEL_DOWN] = SDL_BUTTON(SDL_BUTTON_WHEELDOWN),
+        [INPUT_BUTTON_WHEELUP]    = SDL_BUTTON(SDL_BUTTON_WHEELUP),
+        [INPUT_BUTTON_WHEELDOWN]  = SDL_BUTTON(SDL_BUTTON_WHEELDOWN),
     };
     static uint32_t prev_state;
 
@@ -908,6 +908,16 @@ static const DisplayChangeListenerOps dcl_ops = {
     .dpy_cursor_define    = sdl_mouse_define,
 };
 
+void sdl_display_early_init(int opengl)
+{
+    if (opengl == 1 /* on */) {
+        fprintf(stderr,
+                "SDL1 display code has no opengl support.\n"
+                "Please recompile qemu with SDL2, using\n"
+                "./configure --enable-sdl --with-sdlabi=2.0\n");
+    }
+}
+
 void sdl_display_init(DisplayState *ds, int full_screen, int no_frame)
 {
     int flags;
@@ -975,7 +985,7 @@ void sdl_display_init(DisplayState *ds, int full_screen, int no_frame)
         sdl_grab_start();
     }
 
-    dcl = g_malloc0(sizeof(DisplayChangeListener));
+    dcl = g_new0(DisplayChangeListener, 1);
     dcl->ops = &dcl_ops;
     register_displaychangelistener(dcl);
 

@@ -19,7 +19,7 @@
 #include "block/nbd.h"
 #include "sysemu/block-backend.h"
 
-#include "block/coroutine.h"
+#include "qemu/coroutine.h"
 
 #include <errno.h>
 #include <string.h>
@@ -85,6 +85,59 @@
 #define NBD_OPT_EXPORT_NAME     (1)
 #define NBD_OPT_ABORT           (2)
 #define NBD_OPT_LIST            (3)
+
+/* NBD errors are based on errno numbers, so there is a 1:1 mapping,
+ * but only a limited set of errno values is specified in the protocol.
+ * Everything else is squashed to EINVAL.
+ */
+#define NBD_SUCCESS    0
+#define NBD_EPERM      1
+#define NBD_EIO        5
+#define NBD_ENOMEM     12
+#define NBD_EINVAL     22
+#define NBD_ENOSPC     28
+
+static int system_errno_to_nbd_errno(int err)
+{
+    switch (err) {
+    case 0:
+        return NBD_SUCCESS;
+    case EPERM:
+        return NBD_EPERM;
+    case EIO:
+        return NBD_EIO;
+    case ENOMEM:
+        return NBD_ENOMEM;
+#ifdef EDQUOT
+    case EDQUOT:
+#endif
+    case EFBIG:
+    case ENOSPC:
+        return NBD_ENOSPC;
+    case EINVAL:
+    default:
+        return NBD_EINVAL;
+    }
+}
+
+static int nbd_errno_to_system_errno(int err)
+{
+    switch (err) {
+    case NBD_SUCCESS:
+        return 0;
+    case NBD_EPERM:
+        return EPERM;
+    case NBD_EIO:
+        return EIO;
+    case NBD_ENOMEM:
+        return ENOMEM;
+    case NBD_ENOSPC:
+        return ENOSPC;
+    case NBD_EINVAL:
+    default:
+        return EINVAL;
+    }
+}
 
 /* Definitions for opaque data types */
 
@@ -681,7 +734,7 @@ int nbd_init(int fd, int csock, uint32_t flags, off_t size)
 
     TRACE("Setting size to %zd block(s)", (size_t)(size / BDRV_SECTOR_SIZE));
 
-    if (ioctl(fd, NBD_SET_SIZE_BLOCKS, size / (size_t)BDRV_SECTOR_SIZE) < 0) {
+    if (ioctl(fd, NBD_SET_SIZE_BLOCKS, (size_t)(size / BDRV_SECTOR_SIZE)) < 0) {
         int serrno = errno;
         LOG("Failed setting size (in blocks)");
         return -serrno;
@@ -856,6 +909,8 @@ ssize_t nbd_receive_reply(int csock, struct nbd_reply *reply)
     reply->error  = be32_to_cpup((uint32_t*)(buf + 4));
     reply->handle = be64_to_cpup((uint64_t*)(buf + 8));
 
+    reply->error = nbd_errno_to_system_errno(reply->error);
+
     TRACE("Got reply: "
           "{ magic = 0x%x, .error = %d, handle = %" PRIu64" }",
           magic, reply->error, reply->handle);
@@ -871,6 +926,8 @@ static ssize_t nbd_send_reply(int csock, struct nbd_reply *reply)
 {
     uint8_t buf[NBD_REPLY_SIZE];
     ssize_t ret;
+
+    reply->error = system_errno_to_nbd_errno(reply->error);
 
     /* Reply
        [ 0 ..  3]    magic   (NBD_REPLY_MAGIC)
@@ -948,7 +1005,7 @@ static NBDRequest *nbd_request_get(NBDClient *client)
     client->nb_requests++;
     nbd_update_can_read(client);
 
-    req = g_slice_new0(NBDRequest);
+    req = g_new0(NBDRequest, 1);
     nbd_client_get(client);
     req->client = client;
     return req;
@@ -961,7 +1018,7 @@ static void nbd_request_put(NBDRequest *req)
     if (req->data) {
         qemu_vfree(req->data);
     }
-    g_slice_free(NBDRequest, req);
+    g_free(req);
 
     client->nb_requests--;
     nbd_update_can_read(client);
@@ -1074,12 +1131,6 @@ void nbd_export_close(NBDExport *exp)
     }
     nbd_export_set_name(exp, NULL);
     nbd_export_put(exp);
-    if (exp->blk) {
-        blk_remove_aio_context_notifier(exp->blk, blk_aio_attached,
-                                        blk_aio_detach, exp);
-        blk_unref(exp->blk);
-        exp->blk = NULL;
-    }
 }
 
 void nbd_export_get(NBDExport *exp)
@@ -1100,6 +1151,13 @@ void nbd_export_put(NBDExport *exp)
 
         if (exp->close) {
             exp->close(exp);
+        }
+
+        if (exp->blk) {
+            blk_remove_aio_context_notifier(exp->blk, blk_aio_attached,
+                                            blk_aio_detach, exp);
+            blk_unref(exp->blk);
+            exp->blk = NULL;
         }
 
         g_free(exp);
@@ -1248,6 +1306,14 @@ static void nbd_trip(void *opaque)
         goto invalid_request;
     }
 
+    if (client->closing) {
+        /*
+         * The client may be closed when we are blocked in
+         * nbd_co_receive_request()
+         */
+        goto done;
+    }
+
     switch (command) {
     case NBD_CMD_READ:
         TRACE("Request type is READ");
@@ -1380,6 +1446,7 @@ static void nbd_set_handlers(NBDClient *client)
 {
     if (client->exp && client->exp->ctx) {
         aio_set_fd_handler(client->exp->ctx, client->sock,
+                           true,
                            client->can_read ? nbd_read : NULL,
                            client->send_coroutine ? nbd_restart_write : NULL,
                            client);
@@ -1389,7 +1456,8 @@ static void nbd_set_handlers(NBDClient *client)
 static void nbd_unset_handlers(NBDClient *client)
 {
     if (client->exp && client->exp->ctx) {
-        aio_set_fd_handler(client->exp->ctx, client->sock, NULL, NULL, NULL);
+        aio_set_fd_handler(client->exp->ctx, client->sock,
+                           true, NULL, NULL, NULL);
     }
 }
 

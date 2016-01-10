@@ -266,7 +266,7 @@ static int integratorcm_init(SysBusDevice *dev)
     s->cm_refcnt_offset = muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL), 24,
                                    1000);
     memory_region_init_ram(&s->flash, OBJECT(s), "integrator.flash", 0x100000,
-                           &error_abort);
+                           &error_fatal);
     vmstate_register_ram_global(&s->flash);
 
     memory_region_init_io(&s->iomem, OBJECT(s), &integratorcm_ops, s,
@@ -567,8 +567,8 @@ static void integratorcp_init(MachineState *machine)
 
     cpu = ARM_CPU(cpuobj);
 
-    memory_region_init_ram(ram, NULL, "integrator.ram", ram_size, &error_abort);
-    vmstate_register_ram_global(ram);
+    memory_region_allocate_system_memory(ram, NULL, "integrator.ram",
+                                         ram_size);
     /* ??? On a real system the first 1Mb is mapped as SSRAM or boot flash.  */
     /* ??? RAM should repeat to fill physical memory space.  */
     /* SDRAM at address zero*/
@@ -619,18 +619,13 @@ static void integratorcp_init(MachineState *machine)
     arm_load_kernel(cpu, &integrator_binfo);
 }
 
-static QEMUMachine integratorcp_machine = {
-    .name = "integratorcp",
-    .desc = "ARM Integrator/CP (ARM926EJ-S)",
-    .init = integratorcp_init,
-};
-
-static void integratorcp_machine_init(void)
+static void integratorcp_machine_init(MachineClass *mc)
 {
-    qemu_register_machine(&integratorcp_machine);
+    mc->desc = "ARM Integrator/CP (ARM926EJ-S)";
+    mc->init = integratorcp_init;
 }
 
-machine_init(integratorcp_machine_init);
+DEFINE_MACHINE("integratorcp", integratorcp_machine_init)
 
 static Property core_properties[] = {
     DEFINE_PROP_UINT32("memsz", IntegratorCMState, memsz, 0),

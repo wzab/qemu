@@ -45,7 +45,6 @@ struct VirtIOBlockDataPlane {
      * use it).
      */
     IOThread *iothread;
-    IOThread internal_iothread_obj;
     AioContext *ctx;
     EventNotifier host_notifier;    /* doorbell */
 
@@ -77,8 +76,7 @@ static void complete_request_vring(VirtIOBlockReq *req, unsigned char status)
     VirtIOBlockDataPlane *s = req->dev->dataplane;
     stb_p(&req->in->status, status);
 
-    vring_push(s->vdev, &req->dev->dataplane->vring, &req->elem,
-               req->qiov.size + sizeof(*req->in));
+    vring_push(s->vdev, &req->dev->dataplane->vring, &req->elem, req->in_len);
 
     /* Suppress notification to guest by BH and its scheduled
      * flag because requests are completed as a batch after io
@@ -150,14 +148,14 @@ void virtio_blk_data_plane_create(VirtIODevice *vdev, VirtIOBlkConf *conf,
 
     *dataplane = NULL;
 
-    if (!conf->data_plane && !conf->iothread) {
+    if (!conf->iothread) {
         return;
     }
 
     /* Don't try if transport does not support notifiers. */
     if (!k->set_guest_notifiers || !k->set_host_notifier) {
         error_setg(errp,
-                   "device is incompatible with x-data-plane "
+                   "device is incompatible with dataplane "
                    "(transport does not support notifiers)");
         return;
     }
@@ -180,16 +178,6 @@ void virtio_blk_data_plane_create(VirtIODevice *vdev, VirtIOBlkConf *conf,
     if (conf->iothread) {
         s->iothread = conf->iothread;
         object_ref(OBJECT(s->iothread));
-    } else {
-        /* Create per-device IOThread if none specified.  This is for
-         * x-data-plane option compatibility.  If x-data-plane is removed we
-         * can drop this.
-         */
-        object_initialize(&s->internal_iothread_obj,
-                          sizeof(s->internal_iothread_obj),
-                          TYPE_IOTHREAD);
-        user_creatable_complete(OBJECT(&s->internal_iothread_obj), &error_abort);
-        s->iothread = &s->internal_iothread_obj;
     }
     s->ctx = iothread_get_aio_context(s->iothread);
     s->bh = aio_bh_new(s->ctx, notify_guest_bh, s);
@@ -207,7 +195,7 @@ void virtio_blk_data_plane_create(VirtIODevice *vdev, VirtIOBlkConf *conf,
     blk_op_unblock(conf->conf.blk, BLOCK_OP_TYPE_INTERNAL_SNAPSHOT, s->blocker);
     blk_op_unblock(conf->conf.blk, BLOCK_OP_TYPE_INTERNAL_SNAPSHOT_DELETE,
                    s->blocker);
-    blk_op_unblock(conf->conf.blk, BLOCK_OP_TYPE_MIRROR, s->blocker);
+    blk_op_unblock(conf->conf.blk, BLOCK_OP_TYPE_MIRROR_SOURCE, s->blocker);
     blk_op_unblock(conf->conf.blk, BLOCK_OP_TYPE_STREAM, s->blocker);
     blk_op_unblock(conf->conf.blk, BLOCK_OP_TYPE_REPLACE, s->blocker);
 
@@ -224,8 +212,8 @@ void virtio_blk_data_plane_destroy(VirtIOBlockDataPlane *s)
     virtio_blk_data_plane_stop(s);
     blk_op_unblock_all(s->conf->conf.blk, s->blocker);
     error_free(s->blocker);
-    object_unref(OBJECT(s->iothread));
     qemu_bh_delete(s->bh);
+    object_unref(OBJECT(s->iothread));
     g_free(s);
 }
 
@@ -284,7 +272,8 @@ void virtio_blk_data_plane_start(VirtIOBlockDataPlane *s)
 
     /* Get this show started by hooking up our callbacks */
     aio_context_acquire(s->ctx);
-    aio_set_event_notifier(s->ctx, &s->host_notifier, handle_notify);
+    aio_set_event_notifier(s->ctx, &s->host_notifier, true,
+                           handle_notify);
     aio_context_release(s->ctx);
     return;
 
@@ -320,7 +309,7 @@ void virtio_blk_data_plane_stop(VirtIOBlockDataPlane *s)
     aio_context_acquire(s->ctx);
 
     /* Stop notifications for new requests from guest */
-    aio_set_event_notifier(s->ctx, &s->host_notifier, NULL);
+    aio_set_event_notifier(s->ctx, &s->host_notifier, true, NULL);
 
     /* Drain and switch bs back to the QEMU main loop */
     blk_set_aio_context(s->conf->conf.blk, qemu_get_aio_context());

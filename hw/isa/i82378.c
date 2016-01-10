@@ -65,7 +65,6 @@ static void i82378_realize(PCIDevice *pci, Error **errp)
     uint8_t *pci_conf;
     ISABus *isabus;
     ISADevice *isa;
-    qemu_irq *out0_irq;
 
     pci_conf = pci->config;
     pci_set_word(pci_conf + PCI_COMMAND,
@@ -88,11 +87,9 @@ static void i82378_realize(PCIDevice *pci, Error **errp)
        All devices accept byte access only, except timer
      */
 
-    /* Workaround the fact that i8259 is not qdev'ified... */
-    out0_irq = qemu_allocate_irqs(i82378_request_out0_irq, s, 1);
-
     /* 2 82C59 (irq) */
-    s->i8259 = i8259_init(isabus, *out0_irq);
+    s->i8259 = i8259_init(isabus,
+                          qemu_allocate_irq(i82378_request_out0_irq, s, 0));
     isa_bus_irqs(isabus, s->i8259);
 
     /* 1 82C54 (pit) */
@@ -103,7 +100,6 @@ static void i82378_realize(PCIDevice *pci, Error **errp)
 
     /* 2 82C37 (dma) */
     isa = isa_create_simple(isabus, "i82374");
-    qdev_connect_gpio_out(DEVICE(isa), 0, s->out[1]);
 
     /* timer */
     isa_create_simple(isabus, "mc146818rtc");
@@ -114,7 +110,7 @@ static void i82378_init(Object *obj)
     DeviceState *dev = DEVICE(obj);
     I82378State *s = I82378(obj);
 
-    qdev_init_gpio_out(dev, s->out, 2);
+    qdev_init_gpio_out(dev, s->out, 1);
     qdev_init_gpio_in(dev, i82378_request_pic_irq, 16);
 }
 

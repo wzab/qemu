@@ -17,7 +17,7 @@ MAKEFLAGS += -rR
 QEMU_CXXFLAGS = -D__STDC_LIMIT_MACROS $(filter-out -Wstrict-prototypes -Wmissing-prototypes -Wnested-externs -Wold-style-declaration -Wold-style-definition -Wredundant-decls, $(QEMU_CFLAGS))
 
 # Flags for dependency generation
-QEMU_DGFLAGS += -MMD -MP -MT $@ -MF $(*D)/$(*F).d
+QEMU_DGFLAGS += -MMD -MP -MT $@ -MF $(@D)/$(*F).d
 
 # Same as -I$(SRC_PATH) -I., but for the nested source/object directories
 QEMU_INCLUDES += -I$(<D) -I$(@D)
@@ -102,7 +102,8 @@ endif
 %.o: %.dtrace
 	$(call quiet-command,dtrace -o $@ -G -s $<, "  GEN   $(TARGET_DIR)$@")
 
-%$(DSOSUF): CFLAGS += -fPIC -DBUILD_DSO
+DSO_OBJ_CFLAGS := -fPIC -DBUILD_DSO
+module-common.o: CFLAGS += $(DSO_OBJ_CFLAGS)
 %$(DSOSUF): LDFLAGS += $(LDFLAGS_SHARED)
 %$(DSOSUF): %.mo
 	$(call LINK,$^)
@@ -351,6 +352,7 @@ define unnest-vars
         # For non-module build, add -m to -y
         $(if $(CONFIG_MODULES),
              $(foreach o,$($v),
+                   $(eval $($o-objs): CFLAGS += $(DSO_OBJ_CFLAGS))
                    $(eval $o: $($o-objs)))
              $(eval $(patsubst %-m,%-y,$v) += $($v))
              $(eval modules: $($v:%.mo=%$(DSOSUF))),
@@ -366,6 +368,6 @@ define unnest-vars
                 $(error $o added in $v but $o-objs is not set)))
         $(shell mkdir -p ./ $(sort $(dir $($v))))
         # Include all the .d files
-        $(eval -include $(addsuffix *.d, $(sort $(dir $($v)))))
+        $(eval -include $(patsubst %.o,%.d,$(patsubst %.mo,%.d,$($v))))
         $(eval $v := $(filter-out %/,$($v))))
 endef

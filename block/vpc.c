@@ -168,17 +168,18 @@ static int vpc_open(BlockDriverState *bs, QDict *options, int flags,
     uint8_t buf[HEADER_SIZE];
     uint32_t checksum;
     uint64_t computed_size;
+    uint64_t pagetable_size;
     int disk_type = VHD_DYNAMIC;
     int ret;
 
-    ret = bdrv_pread(bs->file, 0, s->footer_buf, HEADER_SIZE);
+    ret = bdrv_pread(bs->file->bs, 0, s->footer_buf, HEADER_SIZE);
     if (ret < 0) {
         goto fail;
     }
 
     footer = (VHDFooter *) s->footer_buf;
     if (strncmp(footer->creator, "conectix", 8)) {
-        int64_t offset = bdrv_getlength(bs->file);
+        int64_t offset = bdrv_getlength(bs->file->bs);
         if (offset < 0) {
             ret = offset;
             goto fail;
@@ -188,7 +189,7 @@ static int vpc_open(BlockDriverState *bs, QDict *options, int flags,
         }
 
         /* If a fixed disk, the footer is found only at the end of the file */
-        ret = bdrv_pread(bs->file, offset-HEADER_SIZE, s->footer_buf,
+        ret = bdrv_pread(bs->file->bs, offset-HEADER_SIZE, s->footer_buf,
                          HEADER_SIZE);
         if (ret < 0) {
             goto fail;
@@ -231,7 +232,7 @@ static int vpc_open(BlockDriverState *bs, QDict *options, int flags,
     }
 
     if (disk_type == VHD_DYNAMIC) {
-        ret = bdrv_pread(bs->file, be64_to_cpu(footer->data_offset), buf,
+        ret = bdrv_pread(bs->file->bs, be64_to_cpu(footer->data_offset), buf,
                          HEADER_SIZE);
         if (ret < 0) {
             goto fail;
@@ -269,7 +270,17 @@ static int vpc_open(BlockDriverState *bs, QDict *options, int flags,
             goto fail;
         }
 
-        s->pagetable = qemu_try_blockalign(bs->file, s->max_table_entries * 4);
+        if (s->max_table_entries > SIZE_MAX / 4 ||
+            s->max_table_entries > (int) INT_MAX / 4) {
+            error_setg(errp, "Max Table Entries too large (%" PRId32 ")",
+                        s->max_table_entries);
+            ret = -EINVAL;
+            goto fail;
+        }
+
+        pagetable_size = (uint64_t) s->max_table_entries * 4;
+
+        s->pagetable = qemu_try_blockalign(bs->file->bs, pagetable_size);
         if (s->pagetable == NULL) {
             ret = -ENOMEM;
             goto fail;
@@ -277,14 +288,14 @@ static int vpc_open(BlockDriverState *bs, QDict *options, int flags,
 
         s->bat_offset = be64_to_cpu(dyndisk_header->table_offset);
 
-        ret = bdrv_pread(bs->file, s->bat_offset, s->pagetable,
-                         s->max_table_entries * 4);
+        ret = bdrv_pread(bs->file->bs, s->bat_offset, s->pagetable,
+                         pagetable_size);
         if (ret < 0) {
             goto fail;
         }
 
         s->free_data_block_offset =
-            (s->bat_offset + (s->max_table_entries * 4) + 511) & ~511;
+            ROUND_UP(s->bat_offset + pagetable_size, 512);
 
         for (i = 0; i < s->max_table_entries; i++) {
             be32_to_cpus(&s->pagetable[i]);
@@ -298,7 +309,7 @@ static int vpc_open(BlockDriverState *bs, QDict *options, int flags,
             }
         }
 
-        if (s->free_data_block_offset > bdrv_getlength(bs->file)) {
+        if (s->free_data_block_offset > bdrv_getlength(bs->file->bs)) {
             error_setg(errp, "block-vpc: free_data_block_offset points after "
                              "the end of file. The image has been truncated.");
             ret = -EINVAL;
@@ -318,9 +329,9 @@ static int vpc_open(BlockDriverState *bs, QDict *options, int flags,
     qemu_co_mutex_init(&s->lock);
 
     /* Disable migration when VHD images are used */
-    error_set(&s->migration_blocker,
-              QERR_BLOCK_FORMAT_FEATURE_NOT_SUPPORTED,
-              "vpc", bdrv_get_device_name(bs), "live migration");
+    error_setg(&s->migration_blocker, "The vpc format used by node '%s' "
+               "does not support live migration",
+               bdrv_get_device_or_node_name(bs));
     migrate_add_blocker(s->migration_blocker);
 
     return 0;
@@ -373,7 +384,7 @@ static inline int64_t get_sector_offset(BlockDriverState *bs,
 
         s->last_bitmap_offset = bitmap_offset;
         memset(bitmap, 0xff, s->bitmap_size);
-        bdrv_pwrite_sync(bs->file, bitmap_offset, bitmap, s->bitmap_size);
+        bdrv_pwrite_sync(bs->file->bs, bitmap_offset, bitmap, s->bitmap_size);
     }
 
     return block_offset;
@@ -391,7 +402,7 @@ static int rewrite_footer(BlockDriverState* bs)
     BDRVVPCState *s = bs->opaque;
     int64_t offset = s->free_data_block_offset;
 
-    ret = bdrv_pwrite_sync(bs->file, offset, s->footer_buf, HEADER_SIZE);
+    ret = bdrv_pwrite_sync(bs->file->bs, offset, s->footer_buf, HEADER_SIZE);
     if (ret < 0)
         return ret;
 
@@ -426,7 +437,7 @@ static int64_t alloc_block(BlockDriverState* bs, int64_t sector_num)
 
     // Initialize the block's bitmap
     memset(bitmap, 0xff, s->bitmap_size);
-    ret = bdrv_pwrite_sync(bs->file, s->free_data_block_offset, bitmap,
+    ret = bdrv_pwrite_sync(bs->file->bs, s->free_data_block_offset, bitmap,
         s->bitmap_size);
     if (ret < 0) {
         return ret;
@@ -441,7 +452,7 @@ static int64_t alloc_block(BlockDriverState* bs, int64_t sector_num)
     // Write BAT entry to disk
     bat_offset = s->bat_offset + (4 * index);
     bat_value = cpu_to_be32(s->pagetable[index]);
-    ret = bdrv_pwrite_sync(bs->file, bat_offset, &bat_value, 4);
+    ret = bdrv_pwrite_sync(bs->file->bs, bat_offset, &bat_value, 4);
     if (ret < 0)
         goto fail;
 
@@ -475,7 +486,7 @@ static int vpc_read(BlockDriverState *bs, int64_t sector_num,
     VHDFooter *footer = (VHDFooter *) s->footer_buf;
 
     if (be32_to_cpu(footer->type) == VHD_FIXED) {
-        return bdrv_read(bs->file, sector_num, buf, nb_sectors);
+        return bdrv_read(bs->file->bs, sector_num, buf, nb_sectors);
     }
     while (nb_sectors > 0) {
         offset = get_sector_offset(bs, sector_num, 0);
@@ -489,7 +500,7 @@ static int vpc_read(BlockDriverState *bs, int64_t sector_num,
         if (offset == -1) {
             memset(buf, 0, sectors * BDRV_SECTOR_SIZE);
         } else {
-            ret = bdrv_pread(bs->file, offset, buf,
+            ret = bdrv_pread(bs->file->bs, offset, buf,
                 sectors * BDRV_SECTOR_SIZE);
             if (ret != sectors * BDRV_SECTOR_SIZE) {
                 return -1;
@@ -524,7 +535,7 @@ static int vpc_write(BlockDriverState *bs, int64_t sector_num,
     VHDFooter *footer =  (VHDFooter *) s->footer_buf;
 
     if (be32_to_cpu(footer->type) == VHD_FIXED) {
-        return bdrv_write(bs->file, sector_num, buf, nb_sectors);
+        return bdrv_write(bs->file->bs, sector_num, buf, nb_sectors);
     }
     while (nb_sectors > 0) {
         offset = get_sector_offset(bs, sector_num, 1);
@@ -541,7 +552,8 @@ static int vpc_write(BlockDriverState *bs, int64_t sector_num,
                 return -1;
         }
 
-        ret = bdrv_pwrite(bs->file, offset, buf, sectors * BDRV_SECTOR_SIZE);
+        ret = bdrv_pwrite(bs->file->bs, offset, buf,
+                          sectors * BDRV_SECTOR_SIZE);
         if (ret != sectors * BDRV_SECTOR_SIZE) {
             return -1;
         }
@@ -784,7 +796,7 @@ static int vpc_create(const char *filename, QemuOpts *opts, Error **errp)
         goto out;
     }
     ret = bdrv_open(&bs, filename, NULL, NULL, BDRV_O_RDWR | BDRV_O_PROTOCOL,
-                    NULL, &local_err);
+                    &local_err);
     if (ret < 0) {
         error_propagate(errp, local_err);
         goto out;
@@ -868,7 +880,7 @@ static int vpc_has_zero_init(BlockDriverState *bs)
     VHDFooter *footer =  (VHDFooter *) s->footer_buf;
 
     if (be32_to_cpu(footer->type) == VHD_FIXED) {
-        return bdrv_has_zero_init(bs->file);
+        return bdrv_has_zero_init(bs->file->bs);
     } else {
         return 1;
     }
