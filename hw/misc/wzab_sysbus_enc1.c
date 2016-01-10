@@ -24,16 +24,11 @@
 
 #define DEBUG_wzab1 1 
 
-//PCI IDs below are not registred! Use only for experiments!
-#define PCI_VENDOR_ID_WZAB 0xabba
-#define PCI_DEVICE_ID_WZAB_WZENC1 0x0231
-
 //Simulated processing time
 #define ENC1_PROCESSING_TIME 5000000
 #include <inttypes.h>
 #include "hw/sysbus.h"
 #include "hw/hw.h"
-#include "hw/pci/pci.h"
 #include <mcrypt.h>
 #include "qemu/timer.h"
 #include "wzab_enc1.h"
@@ -41,7 +36,7 @@
 /*
   Description of functionalities.
   The emulated hardware is able to perform encryption/decryption using AES256 algorithm.
-  It is a PCI device with memory mapped registers.
+  It is a sysbus connected (platform) device with memory mapped registers.
   Register definitions are provided in "wzab_enc1.h" file
   The data transfer is fulfilled using bus-mastering DMA
   
@@ -93,20 +88,20 @@
 */
 
 //Some prototypes...
-static uint64_t pci_wz_enc1_read(void *opaque, hwaddr addr, unsigned size);
-static void pci_wz_enc1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size);
-int wz_enc1_init (PCIBus *bus);
+static uint64_t wz_enc1_read(void *opaque, hwaddr addr, unsigned size);
+static void wz_enc1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size);
+int wz_enc1_init (SysBusDevice *sbd);
 
 typedef struct WzEnc1State {
   /*<private>*/
-  PCIDevice parent_obj;
+  SysBusDevice parent_obj;
   /*<public>*/
-  MemoryRegion mmio;
+  MemoryRegion iomem;
   union {
     WzEnc1Regs r;
     uint32_t u32[sizeof(WzEnc1Regs)/sizeof(uint32_t)];
   } regs;
-  uint32_t wz_enc1_mmio_io_addr;
+  uint32_t wz_enc1_io_addr;
   uint32_t irq_pending;
   uint32_t irq_mask;
   uint8_t Error;
@@ -116,13 +111,13 @@ typedef struct WzEnc1State {
   QEMUTimer * timer;
 } WzEnc1State;
 
-#define TYPE_PCI_WZENC1 "pci-wzenc1"
+#define TYPE_SYSBUS_WZENC1 "sysbus-wzenc1"
  
-#define PCI_WZENC1(obj) \
-OBJECT_CHECK(WzEnc1State, (obj), TYPE_PCI_WZENC1) 
-static const MemoryRegionOps pci_wz_enc1_mmio_ops = {
-    .read = pci_wz_enc1_read,
-    .write = pci_wz_enc1_write,
+#define WZENC1(obj) \
+OBJECT_CHECK(WzEnc1State, (obj), TYPE_SYSBUS_WZENC1) 
+static const MemoryRegionOps wz_enc1_iomem_ops = {
+    .read = wz_enc1_read,
+    .write = wz_enc1_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
     .impl = {
         .min_access_size = 4, //Always 32-bit access!!
@@ -141,7 +136,7 @@ static void wz_enc1_reset (void * opaque)
 }
 
 /* called for read accesses to our register memory area */
-static uint64_t pci_wz_enc1_read(void *opaque, hwaddr addr, unsigned size)
+static uint64_t wz_enc1_read(void *opaque, hwaddr addr, unsigned size)
 {
   int i_addr;
 #ifdef DEBUG_wzab1
@@ -173,7 +168,7 @@ char cipher_mode[] = "cbc";
 
 /* called for write accesses to our register memory area */
 
-static void pci_wz_enc1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
+static void wz_enc1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
   WzEnc1State *s = opaque;
   int i_addr;
@@ -323,25 +318,16 @@ static void wz_enc1_on_reset (void *opaque)
 }
 */
 
-static int pci_wz_enc1_init (PCIDevice *dev)
+static int pci_wz_enc1_init (SysBusDevice *sbd)
 {
-  WzEnc1State *s = PCI_WZENC1(dev);
-  uint8_t *c = s->parent_obj.config;
-  //Set values in the configuration space
-  //@@ Functions below should be called via do_pci_register_device,
-  //which in turn is called from pci_qdev_init, 
-  //system calls it via pci_device_class_init.
-  //so all PCI specific info should be passed via class structure!
-  //pci_config_set_vendor_id (c, PCI_VENDOR_ID_WZAB);
-  //pci_config_set_device_id (c, PCI_DEVICE_ID_WZAB_WZENC1);
-  //pci_config_set_class (c, PCI_CLASS_OTHERS);
-
-  /* TODO: RST# value should be 0. */
-  c[PCI_INTERRUPT_PIN] = 1;
+  DeviceState *dev = DEVICE(sbd);
+  WzEnc1State *s = WZENC1(dev);
   //Register memory mapped registers
-  memory_region_init_io(&s->mmio,OBJECT(s),&pci_wz_enc1_mmio_ops,s,
-                        "pci-wzenc1-mmio", 0x100); //@@sizeof(s->regs.u32));
-  pci_register_bar (&s->parent_obj, 0,  PCI_BASE_ADDRESS_SPACE_MEMORY,&s->mmio);
+  memory_region_init_io(&s->iomem,OBJECT(s),&wz_enc1_iomem_ops,s,
+                        "sysbus-wzenc1-iomem", 0x100); //@@sizeof(s->regs.u32));
+  sysbus_init_mmio(sbd, &s->iomem);
+  sysbus_init_irq(sbd, &s->irq);
+  @@ TO BE CONTINUED!!!
   qemu_register_reset (wz_enc1_reset, s);
   //Register timer used to simulate processing time
   s->timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, wzab1_tick, s);
