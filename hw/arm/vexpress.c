@@ -168,8 +168,8 @@ typedef struct {
 } VexpressMachineState;
 
 #define TYPE_VEXPRESS_MACHINE   "vexpress"
-#define TYPE_VEXPRESS_A9_MACHINE   "vexpress-a9"
-#define TYPE_VEXPRESS_A15_MACHINE   "vexpress-a15"
+#define TYPE_VEXPRESS_A9_MACHINE   MACHINE_TYPE_NAME("vexpress-a9")
+#define TYPE_VEXPRESS_A15_MACHINE   MACHINE_TYPE_NAME("vexpress-a15")
 #define VEXPRESS_MACHINE(obj) \
     OBJECT_CHECK(VexpressMachineState, (obj), TYPE_VEXPRESS_MACHINE)
 #define VEXPRESS_MACHINE_GET_CLASS(obj) \
@@ -253,6 +253,8 @@ static void init_cpus(const char *cpu_model, const char *privdev,
         DeviceState *cpudev = DEVICE(qemu_get_cpu(n));
 
         sysbus_connect_irq(busdev, n, qdev_get_gpio_in(cpudev, ARM_CPU_IRQ));
+        sysbus_connect_irq(busdev, n + smp_cpus,
+                           qdev_get_gpio_in(cpudev, ARM_CPU_FIQ));
     }
 }
 
@@ -276,9 +278,8 @@ static void a9_daughterboard_init(const VexpressMachineState *vms,
         exit(1);
     }
 
-    memory_region_init_ram(ram, NULL, "vexpress.highmem", ram_size,
-                           &error_abort);
-    vmstate_register_ram_global(ram);
+    memory_region_allocate_system_memory(ram, NULL, "vexpress.highmem",
+                                         ram_size);
     low_ram_size = ram_size;
     if (low_ram_size > 0x4000000) {
         low_ram_size = 0x4000000;
@@ -371,9 +372,8 @@ static void a15_daughterboard_init(const VexpressMachineState *vms,
         }
     }
 
-    memory_region_init_ram(ram, NULL, "vexpress.highmem", ram_size,
-                           &error_abort);
-    vmstate_register_ram_global(ram);
+    memory_region_allocate_system_memory(ram, NULL, "vexpress.highmem",
+                                         ram_size);
     /* RAM is from 0x80000000 upwards; there is no low-memory alias for it. */
     memory_region_add_subregion(sysmem, 0x80000000, ram);
 
@@ -391,7 +391,7 @@ static void a15_daughterboard_init(const VexpressMachineState *vms,
     /* 0x2b0a0000: PL341 dynamic memory controller: not modelled */
     /* 0x2e000000: system SRAM */
     memory_region_init_ram(sram, NULL, "vexpress.a15sram", 0x10000,
-                           &error_abort);
+                           &error_fatal);
     vmstate_register_ram_global(sram);
     memory_region_add_subregion(sysmem, 0x2e000000, sram);
 
@@ -525,7 +525,7 @@ static pflash_t *ve_pflash_cfi01_register(hwaddr base, const char *name,
     qdev_prop_set_uint64(dev, "sector-length", VEXPRESS_FLASH_SECT_SIZE);
     qdev_prop_set_uint8(dev, "width", 4);
     qdev_prop_set_uint8(dev, "device-width", 2);
-    qdev_prop_set_uint8(dev, "big-endian", 0);
+    qdev_prop_set_bit(dev, "big-endian", false);
     qdev_prop_set_uint16(dev, "id0", 0x89);
     qdev_prop_set_uint16(dev, "id1", 0x18);
     qdev_prop_set_uint16(dev, "id2", 0x00);
@@ -541,7 +541,7 @@ static void vexpress_common_init(MachineState *machine)
 {
     VexpressMachineState *vms = VEXPRESS_MACHINE(machine);
     VexpressMachineClass *vmc = VEXPRESS_MACHINE_GET_CLASS(machine);
-    VEDBoardInfo *daughterboard = vmc->daughterboard;;
+    VEDBoardInfo *daughterboard = vmc->daughterboard;
     DeviceState *dev, *sysctl, *pl041;
     qemu_irq pic[64];
     uint32_t sys_id;
@@ -563,6 +563,7 @@ static void vexpress_common_init(MachineState *machine)
      */
     if (bios_name) {
         char *fn;
+        int image_size;
 
         if (drive_get(IF_PFLASH, 0, 0)) {
             error_report("The contents of the first flash device may be "
@@ -571,12 +572,17 @@ static void vexpress_common_init(MachineState *machine)
             exit(1);
         }
         fn = qemu_find_file(QEMU_FILE_TYPE_BIOS, bios_name);
-        if (!fn || load_image_targphys(fn, map[VE_NORFLASH0],
-                                       VEXPRESS_FLASH_SIZE) < 0) {
+        if (!fn) {
+            error_report("Could not find ROM image '%s'", bios_name);
+            exit(1);
+        }
+        image_size = load_image_targphys(fn, map[VE_NORFLASH0],
+                                         VEXPRESS_FLASH_SIZE);
+        g_free(fn);
+        if (image_size < 0) {
             error_report("Could not load ROM image '%s'", bios_name);
             exit(1);
         }
-        g_free(fn);
     }
 
     /* Motherboard peripherals: the wiring is the same but the
@@ -665,13 +671,13 @@ static void vexpress_common_init(MachineState *machine)
 
     sram_size = 0x2000000;
     memory_region_init_ram(sram, NULL, "vexpress.sram", sram_size,
-                           &error_abort);
+                           &error_fatal);
     vmstate_register_ram_global(sram);
     memory_region_add_subregion(sysmem, map[VE_SRAM], sram);
 
     vram_size = 0x800000;
     memory_region_init_ram(vram, NULL, "vexpress.vram", vram_size,
-                           &error_abort);
+                           &error_fatal);
     vmstate_register_ram_global(vram);
     memory_region_add_subregion(sysmem, map[VE_VIDEORAM], vram);
 
@@ -741,7 +747,6 @@ static void vexpress_class_init(ObjectClass *oc, void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
 
-    mc->name = TYPE_VEXPRESS_MACHINE;
     mc->desc = "ARM Versatile Express";
     mc->init = vexpress_common_init;
     mc->block_default_type = IF_SCSI;
@@ -753,10 +758,9 @@ static void vexpress_a9_class_init(ObjectClass *oc, void *data)
     MachineClass *mc = MACHINE_CLASS(oc);
     VexpressMachineClass *vmc = VEXPRESS_MACHINE_CLASS(oc);
 
-    mc->name = TYPE_VEXPRESS_A9_MACHINE;
     mc->desc = "ARM Versatile Express for Cortex-A9";
 
-    vmc->daughterboard = &a9_daughterboard;;
+    vmc->daughterboard = &a9_daughterboard;
 }
 
 static void vexpress_a15_class_init(ObjectClass *oc, void *data)
@@ -764,7 +768,6 @@ static void vexpress_a15_class_init(ObjectClass *oc, void *data)
     MachineClass *mc = MACHINE_CLASS(oc);
     VexpressMachineClass *vmc = VEXPRESS_MACHINE_CLASS(oc);
 
-    mc->name = TYPE_VEXPRESS_A15_MACHINE;
     mc->desc = "ARM Versatile Express for Cortex-A15";
 
     vmc->daughterboard = &a15_daughterboard;

@@ -95,10 +95,17 @@ static void usb_ehci_pci_exit(PCIDevice *dev)
 
     usb_ehci_unrealize(s, DEVICE(dev), NULL);
 
-    if (s->irq) {
-        g_free(s->irq);
-        s->irq = NULL;
-    }
+    g_free(s->irq);
+    s->irq = NULL;
+}
+
+static void usb_ehci_pci_reset(DeviceState *dev)
+{
+    PCIDevice *pci_dev = PCI_DEVICE(dev);
+    EHCIPCIState *i = PCI_EHCI(pci_dev);
+    EHCIState *s = &i->ehci;
+
+    ehci_reset(s);
 }
 
 static void usb_ehci_pci_write_config(PCIDevice *dev, uint32_t addr,
@@ -143,6 +150,7 @@ static void ehci_class_init(ObjectClass *klass, void *data)
     k->config_write = usb_ehci_pci_write_config;
     dc->vmsd = &vmstate_ehci_pci;
     dc->props = ehci_pci_properties;
+    dc->reset = usb_ehci_pci_reset;
 }
 
 static const TypeInfo ehci_pci_type_info = {

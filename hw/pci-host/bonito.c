@@ -233,7 +233,7 @@ static void bonito_writel(void *opaque, hwaddr addr,
     uint32_t saddr;
     int reset = 0;
 
-    saddr = (addr - BONITO_REGBASE) >> 2;
+    saddr = addr >> 2;
 
     DPRINTF("bonito_writel "TARGET_FMT_plx" val %x saddr %x\n", addr, val, saddr);
     switch (saddr) {
@@ -295,7 +295,7 @@ static uint64_t bonito_readl(void *opaque, hwaddr addr,
     PCIBonitoState *s = opaque;
     uint32_t saddr;
 
-    saddr = (addr - BONITO_REGBASE) >> 2;
+    saddr = addr >> 2;
 
     DPRINTF("bonito_readl "TARGET_FMT_plx"\n", addr);
     switch (saddr) {
@@ -355,6 +355,10 @@ static uint64_t bonito_ldma_readl(void *opaque, hwaddr addr,
     uint32_t val;
     PCIBonitoState *s = opaque;
 
+    if (addr >= sizeof(s->bonldma)) {
+        return 0;
+    }
+
     val = ((uint32_t *)(&s->bonldma))[addr/sizeof(uint32_t)];
 
     return val;
@@ -364,6 +368,10 @@ static void bonito_ldma_writel(void *opaque, hwaddr addr,
                                uint64_t val, unsigned size)
 {
     PCIBonitoState *s = opaque;
+
+    if (addr >= sizeof(s->bonldma)) {
+        return;
+    }
 
     ((uint32_t *)(&s->bonldma))[addr/sizeof(uint32_t)] = val & 0xffffffff;
 }
@@ -384,6 +392,10 @@ static uint64_t bonito_cop_readl(void *opaque, hwaddr addr,
     uint32_t val;
     PCIBonitoState *s = opaque;
 
+    if (addr >= sizeof(s->boncop)) {
+        return 0;
+    }
+
     val = ((uint32_t *)(&s->boncop))[addr/sizeof(uint32_t)];
 
     return val;
@@ -393,6 +405,10 @@ static void bonito_cop_writel(void *opaque, hwaddr addr,
                               uint64_t val, unsigned size)
 {
     PCIBonitoState *s = opaque;
+
+    if (addr >= sizeof(s->boncop)) {
+        return;
+    }
 
     ((uint32_t *)(&s->boncop))[addr/sizeof(uint32_t)] = val & 0xffffffff;
 }
@@ -427,7 +443,7 @@ static uint32_t bonito_sbridge_pciaddr(void *opaque, hwaddr addr)
     cfgaddr |= (s->regs[BONITO_PCIMAP_CFG] & 0xffff) << 16;
 
     idsel = (cfgaddr & BONITO_PCICONF_IDSEL_MASK) >> BONITO_PCICONF_IDSEL_OFFSET;
-    devno = ffs(idsel) - 1;
+    devno = ctz32(idsel);
     funno = (cfgaddr & BONITO_PCICONF_FUN_MASK) >> BONITO_PCICONF_FUN_OFFSET;
     regno = (cfgaddr & BONITO_PCICONF_REG_MASK) >> BONITO_PCICONF_REG_OFFSET;
 

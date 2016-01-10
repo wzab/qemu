@@ -261,6 +261,9 @@ static CCW1 copy_ccw_from_guest(hwaddr addr, bool fmt1)
         ret.flags = tmp0.flags;
         ret.count = be16_to_cpu(tmp0.count);
         ret.cda = be16_to_cpu(tmp0.cda1) | (tmp0.cda0 << 16);
+        if ((ret.cmd_code & 0x0f) == CCW_CMD_TIC) {
+            ret.cmd_code &= 0x0f;
+        }
     }
     return ret;
 }
@@ -285,6 +288,10 @@ static int css_interpret_ccw(SubchDev *sch, hwaddr ccw_addr)
     }
     if (((ccw.cmd_code & 0x0f) == CCW_CMD_TIC) &&
         ((ccw.cmd_code & 0xf0) != 0)) {
+        return -EINVAL;
+    }
+    if (!sch->ccw_fmt_1 && (ccw.count == 0) &&
+        (ccw.cmd_code != CCW_CMD_TIC)) {
         return -EINVAL;
     }
 
@@ -392,6 +399,8 @@ static void sch_handle_start_func(SubchDev *sch, ORB *orb)
     path = 0x80;
 
     if (!(s->ctrl & SCSW_ACTL_SUSP)) {
+        s->cstat = 0;
+        s->dstat = 0;
         /* Look at the orb and try to execute the channel program. */
         assert(orb != NULL); /* resume does not pass an orb */
         p->intparm = orb->intparm;
@@ -588,6 +597,7 @@ int css_do_msch(SubchDev *sch, const SCHIB *orig_schib)
 {
     SCSW *s = &sch->curr_status.scsw;
     PMCW *p = &sch->curr_status.pmcw;
+    uint16_t oldflags;
     int ret;
     SCHIB schib;
 
@@ -610,6 +620,7 @@ int css_do_msch(SubchDev *sch, const SCHIB *orig_schib)
     copy_schib_from_guest(&schib, orig_schib);
     /* Only update the program-modifiable fields. */
     p->intparm = schib.pmcw.intparm;
+    oldflags = p->flags;
     p->flags &= ~(PMCW_FLAGS_MASK_ISC | PMCW_FLAGS_MASK_ENA |
                   PMCW_FLAGS_MASK_LM | PMCW_FLAGS_MASK_MME |
                   PMCW_FLAGS_MASK_MP);
@@ -624,6 +635,12 @@ int css_do_msch(SubchDev *sch, const SCHIB *orig_schib)
     p->chars |= schib.pmcw.chars &
             (PMCW_CHARS_MASK_MBFC | PMCW_CHARS_MASK_CSENSE);
     sch->curr_status.mba = schib.mba;
+
+    /* Has the channel been disabled? */
+    if (sch->disable_cb && (oldflags & PMCW_FLAGS_MASK_ENA) != 0
+        && (p->flags & PMCW_FLAGS_MASK_ENA) == 0) {
+        sch->disable_cb(sch);
+    }
 
     ret = 0;
 
@@ -745,20 +762,27 @@ static void css_update_chnmon(SubchDev *sch)
         /* Format 1, per-subchannel area. */
         uint32_t count;
 
-        count = ldl_phys(&address_space_memory, sch->curr_status.mba);
+        count = address_space_ldl(&address_space_memory,
+                                  sch->curr_status.mba,
+                                  MEMTXATTRS_UNSPECIFIED,
+                                  NULL);
         count++;
-        stl_phys(&address_space_memory, sch->curr_status.mba, count);
+        address_space_stl(&address_space_memory, sch->curr_status.mba, count,
+                          MEMTXATTRS_UNSPECIFIED, NULL);
     } else {
         /* Format 0, global area. */
         uint32_t offset;
         uint16_t count;
 
         offset = sch->curr_status.pmcw.mbi << 5;
-        count = lduw_phys(&address_space_memory,
-                          channel_subsys->chnmon_area + offset);
+        count = address_space_lduw(&address_space_memory,
+                                   channel_subsys->chnmon_area + offset,
+                                   MEMTXATTRS_UNSPECIFIED,
+                                   NULL);
         count++;
-        stw_phys(&address_space_memory,
-                 channel_subsys->chnmon_area + offset, count);
+        address_space_stw(&address_space_memory,
+                          channel_subsys->chnmon_area + offset, count,
+                          MEMTXATTRS_UNSPECIFIED, NULL);
     }
 }
 
@@ -868,8 +892,14 @@ int css_do_tsch_get_irb(SubchDev *sch, IRB *target_irb, int *irb_len)
         /* If a unit check is pending, copy sense data. */
         if ((s->dstat & SCSW_DSTAT_UNIT_CHECK) &&
             (p->chars & PMCW_CHARS_MASK_CSENSE)) {
+            int i;
+
             irb.scsw.flags |= SCSW_FLAGS_MASK_ESWF | SCSW_FLAGS_MASK_ECTL;
+            /* Attention: sense_data is already BE! */
             memcpy(irb.ecw, sch->sense_data, sizeof(sch->sense_data));
+            for (i = 0; i < ARRAY_SIZE(irb.ecw); i++) {
+                irb.ecw[i] = be32_to_cpu(irb.ecw[i]);
+            }
             irb.esw[1] = 0x01000000 | (sizeof(sch->sense_data) << 8);
         }
     }
@@ -1457,6 +1487,21 @@ int subch_device_load(SubchDev *s, QEMUFile *f)
     }
     s->ccw_fmt_1 = qemu_get_byte(f);
     s->ccw_no_data_cnt = qemu_get_byte(f);
+    /*
+     * Hack alert. We don't migrate the channel subsystem status (no
+     * device!), but we need to find out if the guest enabled mss/mcss-e.
+     * If the subchannel is enabled, it certainly was able to access it,
+     * so adjust the max_ssid/max_cssid values for relevant ssid/cssid
+     * values. This is not watertight, but better than nothing.
+     */
+    if (s->curr_status.pmcw.flags & PMCW_FLAGS_MASK_ENA) {
+        if (s->ssid) {
+            channel_subsys->max_ssid = MAX_SSID;
+        }
+        if (s->cssid != channel_subsys->default_cssid) {
+            channel_subsys->max_cssid = MAX_CSSID;
+        }
+    }
     return 0;
 }
 
@@ -1475,6 +1520,10 @@ machine_init(css_init);
 void css_reset_sch(SubchDev *sch)
 {
     PMCW *p = &sch->curr_status.pmcw;
+
+    if ((p->flags & PMCW_FLAGS_MASK_ENA) != 0 && sch->disable_cb) {
+        sch->disable_cb(sch);
+    }
 
     p->intparm = 0;
     p->flags &= ~(PMCW_FLAGS_MASK_ISC | PMCW_FLAGS_MASK_ENA |

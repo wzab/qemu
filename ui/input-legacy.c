@@ -23,7 +23,6 @@
  */
 
 #include "sysemu/sysemu.h"
-#include "monitor/monitor.h"
 #include "ui/console.h"
 #include "qapi/error.h"
 #include "qmp-commands.h"
@@ -39,7 +38,7 @@ struct QEMUPutMouseEntry {
     /* new input core */
     QemuInputHandler h;
     QemuInputHandlerState *s;
-    int axis[INPUT_AXIS_MAX];
+    int axis[INPUT_AXIS__MAX];
     int buttons;
 };
 
@@ -57,8 +56,6 @@ struct QEMUPutLEDEntry {
 
 static QTAILQ_HEAD(, QEMUPutLEDEntry) led_handlers =
     QTAILQ_HEAD_INITIALIZER(led_handlers);
-static QTAILQ_HEAD(, QEMUPutMouseEntry) mouse_handlers =
-    QTAILQ_HEAD_INITIALIZER(mouse_handlers);
 
 int index_from_key(const char *key)
 {
@@ -70,7 +67,7 @@ int index_from_key(const char *key)
         }
     }
 
-    /* Return Q_KEY_CODE_MAX if the key is invalid */
+    /* Return Q_KEY_CODE__MAX if the key is invalid */
     return i;
 }
 
@@ -116,8 +113,8 @@ static void legacy_kbd_event(DeviceState *dev, QemuConsole *src,
     if (!entry || !entry->put_kbd) {
         return;
     }
-    count = qemu_input_key_value_to_scancode(evt->key->key,
-                                             evt->key->down,
+    count = qemu_input_key_value_to_scancode(evt->u.key->key,
+                                             evt->u.key->down,
                                              scancodes);
     for (i = 0; i < count; i++) {
         entry->put_kbd(entry->opaque, scancodes[i]);
@@ -146,28 +143,29 @@ QEMUPutKbdEntry *qemu_add_kbd_event_handler(QEMUPutKBDEvent *func, void *opaque)
 static void legacy_mouse_event(DeviceState *dev, QemuConsole *src,
                                InputEvent *evt)
 {
-    static const int bmap[INPUT_BUTTON_MAX] = {
+    static const int bmap[INPUT_BUTTON__MAX] = {
         [INPUT_BUTTON_LEFT]   = MOUSE_EVENT_LBUTTON,
         [INPUT_BUTTON_MIDDLE] = MOUSE_EVENT_MBUTTON,
         [INPUT_BUTTON_RIGHT]  = MOUSE_EVENT_RBUTTON,
     };
     QEMUPutMouseEntry *s = (QEMUPutMouseEntry *)dev;
 
-    switch (evt->kind) {
+    switch (evt->type) {
     case INPUT_EVENT_KIND_BTN:
-        if (evt->btn->down) {
-            s->buttons |= bmap[evt->btn->button];
+        if (evt->u.btn->down) {
+            s->buttons |= bmap[evt->u.btn->button];
         } else {
-            s->buttons &= ~bmap[evt->btn->button];
+            s->buttons &= ~bmap[evt->u.btn->button];
         }
-        if (evt->btn->down && evt->btn->button == INPUT_BUTTON_WHEEL_UP) {
+        if (evt->u.btn->down && evt->u.btn->button == INPUT_BUTTON_WHEELUP) {
             s->qemu_put_mouse_event(s->qemu_put_mouse_event_opaque,
                                     s->axis[INPUT_AXIS_X],
                                     s->axis[INPUT_AXIS_Y],
                                     -1,
                                     s->buttons);
         }
-        if (evt->btn->down && evt->btn->button == INPUT_BUTTON_WHEEL_DOWN) {
+        if (evt->u.btn->down &&
+            evt->u.btn->button == INPUT_BUTTON_WHEELDOWN) {
             s->qemu_put_mouse_event(s->qemu_put_mouse_event_opaque,
                                     s->axis[INPUT_AXIS_X],
                                     s->axis[INPUT_AXIS_Y],
@@ -176,10 +174,10 @@ static void legacy_mouse_event(DeviceState *dev, QemuConsole *src,
         }
         break;
     case INPUT_EVENT_KIND_ABS:
-        s->axis[evt->abs->axis] = evt->abs->value;
+        s->axis[evt->u.abs->axis] = evt->u.abs->value;
         break;
     case INPUT_EVENT_KIND_REL:
-        s->axis[evt->rel->axis] += evt->rel->value;
+        s->axis[evt->u.rel->axis] += evt->u.rel->value;
         break;
     default:
         break;
@@ -208,7 +206,7 @@ QEMUPutMouseEntry *qemu_add_mouse_event_handler(QEMUPutMouseEvent *func,
 {
     QEMUPutMouseEntry *s;
 
-    s = g_malloc0(sizeof(QEMUPutMouseEntry));
+    s = g_new0(QEMUPutMouseEntry, 1);
 
     s->qemu_put_mouse_event = func;
     s->qemu_put_mouse_event_opaque = opaque;
@@ -242,7 +240,7 @@ QEMUPutLEDEntry *qemu_add_led_event_handler(QEMUPutLEDEvent *func,
 {
     QEMUPutLEDEntry *s;
 
-    s = g_malloc0(sizeof(QEMUPutLEDEntry));
+    s = g_new0(QEMUPutLEDEntry, 1);
 
     s->put_led = func;
     s->opaque = opaque;

@@ -66,6 +66,8 @@ struct kvm_s390_io_adapter_req {
 #define KVM_S390_VM_MEM_CLR_CMMA	1
 #define KVM_S390_VM_MEM_LIMIT_SIZE	2
 
+#define KVM_S390_NO_MEM_LIMIT		U64_MAX
+
 /* kvm attributes for KVM_S390_VM_TOD */
 #define KVM_S390_VM_TOD_LOW		0
 #define KVM_S390_VM_TOD_HIGH		1
@@ -150,6 +152,7 @@ struct kvm_guest_debug_arch {
 #define KVM_SYNC_CRS    (1UL << 3)
 #define KVM_SYNC_ARCH0  (1UL << 4)
 #define KVM_SYNC_PFAULT (1UL << 5)
+#define KVM_SYNC_VRS    (1UL << 6)
 /* definition of registers in kvm_run */
 struct kvm_sync_regs {
 	__u64 prefix;	/* prefix register */
@@ -164,6 +167,9 @@ struct kvm_sync_regs {
 	__u64 pft;	/* pfault token [PFAULT] */
 	__u64 pfs;	/* pfault select [PFAULT] */
 	__u64 pfc;	/* pfault compare [PFAULT] */
+	__u64 vrs[32][2];	/* vector registers */
+	__u8  reserved[512];	/* for future vector expansion */
+	__u32 fpc;	/* only valid with vector registers */
 };
 
 #define KVM_REG_S390_TODPR	(KVM_REG_S390 | KVM_REG_SIZE_U32 | 0x1)

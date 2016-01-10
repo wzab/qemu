@@ -92,7 +92,10 @@ static uint32_t unin_get_config_reg(uint32_t reg, uint32_t addr)
         uint32_t slot, func;
 
         /* Grab CFA0 style values */
-        slot = ffs(reg & 0xfffff800) - 1;
+        slot = ctz32(reg & 0xfffff800);
+        if (slot == 32) {
+            slot = -1; /* XXX: should this be 0? */
+        }
         func = (reg >> 8) & 7;
 
         /* ... and then convert them to x86 format */
@@ -443,8 +446,10 @@ static const TypeInfo unin_internal_pci_host_info = {
 static void pci_unin_main_class_init(ObjectClass *klass, void *data)
 {
     SysBusDeviceClass *sbc = SYS_BUS_DEVICE_CLASS(klass);
+    DeviceClass *dc = DEVICE_CLASS(klass);
 
     sbc->init = pci_unin_main_init_device;
+    set_bit(DEVICE_CATEGORY_BRIDGE, dc->categories);
 }
 
 static const TypeInfo pci_unin_main_info = {
@@ -457,8 +462,10 @@ static const TypeInfo pci_unin_main_info = {
 static void pci_u3_agp_class_init(ObjectClass *klass, void *data)
 {
     SysBusDeviceClass *sbc = SYS_BUS_DEVICE_CLASS(klass);
+    DeviceClass *dc = DEVICE_CLASS(klass);
 
     sbc->init = pci_u3_agp_init_device;
+    set_bit(DEVICE_CATEGORY_BRIDGE, dc->categories);
 }
 
 static const TypeInfo pci_u3_agp_info = {
@@ -471,8 +478,10 @@ static const TypeInfo pci_u3_agp_info = {
 static void pci_unin_agp_class_init(ObjectClass *klass, void *data)
 {
     SysBusDeviceClass *sbc = SYS_BUS_DEVICE_CLASS(klass);
+    DeviceClass *dc = DEVICE_CLASS(klass);
 
     sbc->init = pci_unin_agp_init_device;
+    set_bit(DEVICE_CATEGORY_BRIDGE, dc->categories);
 }
 
 static const TypeInfo pci_unin_agp_info = {
@@ -485,8 +494,10 @@ static const TypeInfo pci_unin_agp_info = {
 static void pci_unin_internal_class_init(ObjectClass *klass, void *data)
 {
     SysBusDeviceClass *sbc = SYS_BUS_DEVICE_CLASS(klass);
+    DeviceClass *dc = DEVICE_CLASS(klass);
 
     sbc->init = pci_unin_internal_init_device;
+    set_bit(DEVICE_CATEGORY_BRIDGE, dc->categories);
 }
 
 static const TypeInfo pci_unin_internal_info = {

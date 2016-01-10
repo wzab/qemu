@@ -23,6 +23,7 @@
 #include "qom/cpu.h"
 #include "cpu.h"
 #include "qapi/error.h"
+#include "qemu/notify.h"
 
 #ifdef TARGET_X86_64
 #define TYPE_X86_CPU "x86_64-cpu"
@@ -87,7 +88,14 @@ typedef struct X86CPU {
     bool hyperv_vapic;
     bool hyperv_relaxed_timing;
     int hyperv_spinlock_attempts;
+    char *hyperv_vendor_id;
     bool hyperv_time;
+    bool hyperv_crash;
+    bool hyperv_reset;
+    bool hyperv_vpindex;
+    bool hyperv_runtime;
+    bool hyperv_synic;
+    bool hyperv_stimer;
     bool check_cpuid;
     bool enforce_cpuid;
     bool expose_kvm;
@@ -111,6 +119,8 @@ typedef struct X86CPU {
     /* in order to simplify APIC support, we leave this pointer to the
        user */
     struct DeviceState *apic_state;
+    struct MemoryRegion *cpu_as_root, *cpu_as_mem, *smram;
+    Notifier machine_done;
 } X86CPU;
 
 static inline X86CPU *x86_env_get_cpu(CPUX86State *env)

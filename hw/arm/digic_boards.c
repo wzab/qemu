@@ -51,9 +51,8 @@ typedef struct DigicBoard {
 
 static void digic4_board_setup_ram(DigicBoardState *s, hwaddr ram_size)
 {
-    memory_region_init_ram(&s->ram, NULL, "ram", ram_size, &error_abort);
+    memory_region_allocate_system_memory(&s->ram, NULL, "ram", ram_size);
     memory_region_add_subregion(get_system_memory(), 0, &s->ram);
-    vmstate_register_ram_global(&s->ram);
 }
 
 static void digic4_board_init(DigicBoard *board)
@@ -149,15 +148,10 @@ static void canon_a1100_init(MachineState *machine)
     digic4_board_init(&digic4_board_canon_a1100);
 }
 
-static QEMUMachine canon_a1100 = {
-    .name = "canon-a1100",
-    .desc = "Canon PowerShot A1100 IS",
-    .init = &canon_a1100_init,
-};
-
-static void digic_register_machines(void)
+static void canon_a1100_machine_init(MachineClass *mc)
 {
-    qemu_register_machine(&canon_a1100);
+    mc->desc = "Canon PowerShot A1100 IS";
+    mc->init = &canon_a1100_init;
 }
 
-machine_init(digic_register_machines)
+DEFINE_MACHINE("canon-a1100", canon_a1100_machine_init)

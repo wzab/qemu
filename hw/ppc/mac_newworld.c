@@ -119,7 +119,7 @@ static const MemoryRegionOps unin_ops = {
 static void fw_cfg_boot_set(void *opaque, const char *boot_device,
                             Error **errp)
 {
-    fw_cfg_add_i16(opaque, FW_CFG_BOOT_DEVICE, boot_device[0]);
+    fw_cfg_modify_i16(opaque, FW_CFG_BOOT_DEVICE, boot_device[0]);
 }
 
 static uint64_t translate_kernel_address(void *opaque, uint64_t addr)
@@ -145,7 +145,6 @@ static void ppc_core99_reset(void *opaque)
 static void ppc_core99_init(MachineState *machine)
 {
     ram_addr_t ram_size = machine->ram_size;
-    const char *cpu_model = machine->cpu_model;
     const char *kernel_filename = machine->kernel_filename;
     const char *kernel_cmdline = machine->kernel_cmdline;
     const char *initrd_filename = machine->initrd_filename;
@@ -182,14 +181,15 @@ static void ppc_core99_init(MachineState *machine)
     linux_boot = (kernel_filename != NULL);
 
     /* init CPUs */
-    if (cpu_model == NULL)
+    if (machine->cpu_model == NULL) {
 #ifdef TARGET_PPC64
-        cpu_model = "970fx";
+        machine->cpu_model = "970fx";
 #else
-        cpu_model = "G4";
+        machine->cpu_model = "G4";
 #endif
+    }
     for (i = 0; i < smp_cpus; i++) {
-        cpu = cpu_ppc_init(cpu_model);
+        cpu = cpu_ppc_init(machine->cpu_model);
         if (cpu == NULL) {
             fprintf(stderr, "Unable to find PowerPC CPU definition\n");
             exit(1);
@@ -207,7 +207,7 @@ static void ppc_core99_init(MachineState *machine)
 
     /* allocate and load BIOS */
     memory_region_init_ram(bios, NULL, "ppc_core99.bios", BIOS_SIZE,
-                           &error_abort);
+                           &error_fatal);
     vmstate_register_ram_global(bios);
 
     if (bios_name == NULL)
@@ -219,7 +219,7 @@ static void ppc_core99_init(MachineState *machine)
     /* Load OpenBIOS (ELF) */
     if (filename) {
         bios_size = load_elf(filename, NULL, NULL, NULL,
-                             NULL, NULL, 1, ELF_MACHINE, 0);
+                             NULL, NULL, 1, PPC_ELF_MACHINE, 0);
 
         g_free(filename);
     } else {
@@ -242,7 +242,7 @@ static void ppc_core99_init(MachineState *machine)
         kernel_base = KERNEL_LOAD_ADDR;
 
         kernel_size = load_elf(kernel_filename, translate_kernel_address, NULL,
-                               NULL, &lowaddr, NULL, 1, ELF_MACHINE, 0);
+                               NULL, &lowaddr, NULL, 1, PPC_ELF_MACHINE, 0);
         if (kernel_size < 0)
             kernel_size = load_aout(kernel_filename, kernel_base,
                                     ram_size - kernel_base, bswap_needed,
@@ -371,11 +371,12 @@ static void ppc_core99_init(MachineState *machine)
         /* 970 gets a U3 bus */
         pci_bus = pci_pmac_u3_init(pic, get_system_memory(), get_system_io());
         machine_arch = ARCH_MAC99_U3;
-        machine->usb |= defaults_enabled();
     } else {
         pci_bus = pci_pmac_init(pic, get_system_memory(), get_system_io());
         machine_arch = ARCH_MAC99;
     }
+
+    machine->usb |= defaults_enabled() && !machine->usb_disabled;
 
     /* Timebase Frequency */
     if (kvm_enabled()) {
@@ -460,7 +461,6 @@ static void ppc_core99_init(MachineState *machine)
 
     fw_cfg = fw_cfg_init_mem(CFG_ADDR, CFG_ADDR + 2);
     fw_cfg_add_i16(fw_cfg, FW_CFG_MAX_CPUS, (uint16_t)max_cpus);
-    fw_cfg_add_i32(fw_cfg, FW_CFG_ID, 1);
     fw_cfg_add_i64(fw_cfg, FW_CFG_RAM_SIZE, (uint64_t)ram_size);
     fw_cfg_add_i16(fw_cfg, FW_CFG_MACHINE_ID, machine_arch);
     fw_cfg_add_i32(fw_cfg, FW_CFG_KERNEL_ADDR, kernel_base);
@@ -509,7 +509,6 @@ static void core99_machine_class_init(ObjectClass *oc, void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
 
-    mc->name = "mac99";
     mc->desc = "Mac99 based PowerMAC";
     mc->init = ppc_core99_init;
     mc->max_cpus = MAX_CPUS;
@@ -518,7 +517,7 @@ static void core99_machine_class_init(ObjectClass *oc, void *data)
 }
 
 static const TypeInfo core99_machine_info = {
-    .name          = "mac99-machine",
+    .name          = MACHINE_TYPE_NAME("mac99"),
     .parent        = TYPE_MACHINE,
     .class_init    = core99_machine_class_init,
 };

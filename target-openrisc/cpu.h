@@ -21,7 +21,6 @@
 #define CPU_OPENRISC_H
 
 #define TARGET_LONG_BITS 32
-#define ELF_MACHINE    EM_OPENRISC
 
 #define CPUArchState struct CPUOpenRISCState
 
@@ -346,7 +345,7 @@ static inline OpenRISCCPU *openrisc_env_get_cpu(CPUOpenRISCState *env)
 OpenRISCCPU *cpu_openrisc_init(const char *cpu_model);
 
 void cpu_openrisc_list(FILE *f, fprintf_function cpu_fprintf);
-int cpu_openrisc_exec(CPUOpenRISCState *s);
+int cpu_openrisc_exec(CPUState *cpu);
 void openrisc_cpu_do_interrupt(CPUState *cpu);
 bool openrisc_cpu_exec_interrupt(CPUState *cpu, int int_req);
 void openrisc_cpu_dump_state(CPUState *cpu, FILE *f,
@@ -361,7 +360,6 @@ int cpu_openrisc_signal_handler(int host_signum, void *pinfo, void *puc);
 
 #define cpu_list cpu_openrisc_list
 #define cpu_exec cpu_openrisc_exec
-#define cpu_gen_code cpu_openrisc_gen_code
 #define cpu_signal_handler cpu_openrisc_signal_handler
 
 #ifndef CONFIG_USER_ONLY
@@ -403,7 +401,7 @@ static inline void cpu_get_tb_cpu_state(CPUOpenRISCState *env,
     *flags = (env->flags & D_FLAG);
 }
 
-static inline int cpu_mmu_index(CPUOpenRISCState *env)
+static inline int cpu_mmu_index(CPUOpenRISCState *env, bool ifetch)
 {
     if (!(env->sr & SR_IME)) {
         return MMU_NOMMU_IDX;
@@ -414,10 +412,5 @@ static inline int cpu_mmu_index(CPUOpenRISCState *env)
 #define CPU_INTERRUPT_TIMER   CPU_INTERRUPT_TGT_INT_0
 
 #include "exec/exec-all.h"
-
-static inline target_ulong cpu_get_pc(CPUOpenRISCState *env)
-{
-    return env->pc;
-}
 
 #endif /* CPU_OPENRISC_H */

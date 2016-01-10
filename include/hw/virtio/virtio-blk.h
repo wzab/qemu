@@ -37,7 +37,6 @@ struct VirtIOBlkConf
     char *serial;
     uint32_t scsi;
     uint32_t config_wce;
-    uint32_t data_plane;
     uint32_t request_merging;
 };
 
@@ -67,6 +66,7 @@ typedef struct VirtIOBlockReq {
     struct virtio_blk_inhdr *in;
     struct virtio_blk_outhdr out;
     QEMUIOVector qiov;
+    size_t in_len;
     struct VirtIOBlockReq *next;
     struct VirtIOBlockReq *mr_next;
     BlockAcctCookie acct;

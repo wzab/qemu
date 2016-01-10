@@ -210,6 +210,8 @@ static const TCGTargetOpDef tcg_target_op_defs[] = {
 #if TCG_TARGET_HAS_ext32u_i64
     { INDEX_op_ext32u_i64, { R, R } },
 #endif
+    { INDEX_op_ext_i32_i64, { R, R } },
+    { INDEX_op_extu_i32_i64, { R, R } },
 #if TCG_TARGET_HAS_bswap16_i64
     { INDEX_op_bswap16_i64, { R, R } },
 #endif
@@ -701,6 +703,8 @@ static void tcg_out_op(TCGContext *s, TCGOpcode opc, const TCGArg *args,
     case INDEX_op_ext16u_i64:   /* Optional (TCG_TARGET_HAS_ext16u_i64). */
     case INDEX_op_ext32s_i64:   /* Optional (TCG_TARGET_HAS_ext32s_i64). */
     case INDEX_op_ext32u_i64:   /* Optional (TCG_TARGET_HAS_ext32u_i64). */
+    case INDEX_op_ext_i32_i64:
+    case INDEX_op_extu_i32_i64:
 #endif /* TCG_TARGET_REG_BITS == 64 */
     case INDEX_op_neg_i32:      /* Optional (TCG_TARGET_HAS_neg_i32). */
     case INDEX_op_not_i32:      /* Optional (TCG_TARGET_HAS_not_i32). */
@@ -763,9 +767,6 @@ static void tcg_out_op(TCGContext *s, TCGOpcode opc, const TCGArg *args,
             tcg_out_r(s, *args++);
         }
         tcg_out_i(s, *args++);
-#ifdef CONFIG_SOFTMMU
-        tcg_out_i(s, *args);
-#endif
         break;
     case INDEX_op_qemu_ld_i64:
         tcg_out_r(s, *args++);
@@ -777,9 +778,6 @@ static void tcg_out_op(TCGContext *s, TCGOpcode opc, const TCGArg *args,
             tcg_out_r(s, *args++);
         }
         tcg_out_i(s, *args++);
-#ifdef CONFIG_SOFTMMU
-        tcg_out_i(s, *args);
-#endif
         break;
     case INDEX_op_qemu_st_i32:
         tcg_out_r(s, *args++);
@@ -788,9 +786,6 @@ static void tcg_out_op(TCGContext *s, TCGOpcode opc, const TCGArg *args,
             tcg_out_r(s, *args++);
         }
         tcg_out_i(s, *args++);
-#ifdef CONFIG_SOFTMMU
-        tcg_out_i(s, *args);
-#endif
         break;
     case INDEX_op_qemu_st_i64:
         tcg_out_r(s, *args++);
@@ -802,9 +797,6 @@ static void tcg_out_op(TCGContext *s, TCGOpcode opc, const TCGArg *args,
             tcg_out_r(s, *args++);
         }
         tcg_out_i(s, *args++);
-#ifdef CONFIG_SOFTMMU
-        tcg_out_i(s, *args);
-#endif
         break;
     case INDEX_op_mov_i32:  /* Always emitted via tcg_out_mov.  */
     case INDEX_op_mov_i64:
@@ -858,7 +850,7 @@ static void tcg_target_init(TCGContext *s)
 #endif
 
     /* The current code uses uint8_t for tcg operations. */
-    assert(ARRAY_SIZE(tcg_op_defs) <= UINT8_MAX);
+    assert(tcg_op_defs_max <= UINT8_MAX);
 
     /* Registers available for 32 bit operations. */
     tcg_regset_set32(tcg_target_available_regs[TCG_TYPE_I32], 0,

@@ -4285,19 +4285,23 @@ static inline void gen_op_mfspr(DisasContext *ctx)
              * allowing userland application to read the PVR
              */
             if (sprn != SPR_PVR) {
-                qemu_log("Trying to read privileged spr %d (0x%03x) at "
-                         TARGET_FMT_lx "\n", sprn, sprn, ctx->nip - 4);
-                printf("Trying to read privileged spr %d (0x%03x) at "
-                       TARGET_FMT_lx "\n", sprn, sprn, ctx->nip - 4);
+                fprintf(stderr, "Trying to read privileged spr %d (0x%03x) at "
+                        TARGET_FMT_lx "\n", sprn, sprn, ctx->nip - 4);
+                if (qemu_log_separate()) {
+                    qemu_log("Trying to read privileged spr %d (0x%03x) at "
+                             TARGET_FMT_lx "\n", sprn, sprn, ctx->nip - 4);
+                }
             }
             gen_inval_exception(ctx, POWERPC_EXCP_PRIV_REG);
         }
     } else {
         /* Not defined */
-        qemu_log("Trying to read invalid spr %d (0x%03x) at "
-                 TARGET_FMT_lx "\n", sprn, sprn, ctx->nip - 4);
-        printf("Trying to read invalid spr %d (0x%03x) at "
-               TARGET_FMT_lx "\n", sprn, sprn, ctx->nip - 4);
+        fprintf(stderr, "Trying to read invalid spr %d (0x%03x) at "
+                TARGET_FMT_lx "\n", sprn, sprn, ctx->nip - 4);
+        if (qemu_log_separate()) {
+            qemu_log("Trying to read invalid spr %d (0x%03x) at "
+                     TARGET_FMT_lx "\n", sprn, sprn, ctx->nip - 4);
+        }
         gen_inval_exception(ctx, POWERPC_EXCP_INVAL_SPR);
     }
 }
@@ -4431,18 +4435,22 @@ static void gen_mtspr(DisasContext *ctx)
             (*write_cb)(ctx, sprn, rS(ctx->opcode));
         } else {
             /* Privilege exception */
-            qemu_log("Trying to write privileged spr %d (0x%03x) at "
-                     TARGET_FMT_lx "\n", sprn, sprn, ctx->nip - 4);
-            printf("Trying to write privileged spr %d (0x%03x) at "
-                   TARGET_FMT_lx "\n", sprn, sprn, ctx->nip - 4);
+            fprintf(stderr, "Trying to write privileged spr %d (0x%03x) at "
+                    TARGET_FMT_lx "\n", sprn, sprn, ctx->nip - 4);
+            if (qemu_log_separate()) {
+                qemu_log("Trying to write privileged spr %d (0x%03x) at "
+                         TARGET_FMT_lx "\n", sprn, sprn, ctx->nip - 4);
+            }
             gen_inval_exception(ctx, POWERPC_EXCP_PRIV_REG);
         }
     } else {
         /* Not defined */
-        qemu_log("Trying to write invalid spr %d (0x%03x) at "
-                 TARGET_FMT_lx "\n", sprn, sprn, ctx->nip - 4);
-        printf("Trying to write invalid spr %d (0x%03x) at "
-               TARGET_FMT_lx "\n", sprn, sprn, ctx->nip - 4);
+        if (qemu_log_separate()) {
+            qemu_log("Trying to write invalid spr %d (0x%03x) at "
+                     TARGET_FMT_lx "\n", sprn, sprn, ctx->nip - 4);
+        }
+        fprintf(stderr, "Trying to write invalid spr %d (0x%03x) at "
+                TARGET_FMT_lx "\n", sprn, sprn, ctx->nip - 4);
         gen_inval_exception(ctx, POWERPC_EXCP_INVAL_SPR);
     }
 }
@@ -9884,7 +9892,7 @@ GEN_HANDLER(mtcrf, 0x1F, 0x10, 0x04, 0x00000801, PPC_MISC),
 GEN_HANDLER(mtmsrd, 0x1F, 0x12, 0x05, 0x001EF801, PPC_64B),
 #endif
 GEN_HANDLER(mtmsr, 0x1F, 0x12, 0x04, 0x001FF801, PPC_MISC),
-GEN_HANDLER(mtspr, 0x1F, 0x13, 0x0E, 0x00000001, PPC_MISC),
+GEN_HANDLER(mtspr, 0x1F, 0x13, 0x0E, 0x00000000, PPC_MISC),
 GEN_HANDLER(dcbf, 0x1F, 0x16, 0x02, 0x03C00001, PPC_CACHE),
 GEN_HANDLER(dcbi, 0x1F, 0x16, 0x0E, 0x03E00001, PPC_CACHE),
 GEN_HANDLER(dcbst, 0x1F, 0x16, 0x01, 0x03E00001, PPC_CACHE),
@@ -10670,6 +10678,13 @@ GEN_HANDLER2_E(name, #name, 0x3C, opc2 | 1, opc3, 0, PPC_NONE, fl2), \
 GEN_HANDLER2_E(name, #name, 0x3C, opc2 | 2, opc3, 0, PPC_NONE, fl2), \
 GEN_HANDLER2_E(name, #name, 0x3C, opc2 | 3, opc3, 0, PPC_NONE, fl2)
 
+#undef GEN_XX2IFORM
+#define GEN_XX2IFORM(name, opc2, opc3, fl2)                           \
+GEN_HANDLER2_E(name, #name, 0x3C, opc2 | 0, opc3, 1, PPC_NONE, fl2), \
+GEN_HANDLER2_E(name, #name, 0x3C, opc2 | 1, opc3, 1, PPC_NONE, fl2), \
+GEN_HANDLER2_E(name, #name, 0x3C, opc2 | 2, opc3, 1, PPC_NONE, fl2), \
+GEN_HANDLER2_E(name, #name, 0x3C, opc2 | 3, opc3, 1, PPC_NONE, fl2)
+
 #undef GEN_XX3_RC_FORM
 #define GEN_XX3_RC_FORM(name, opc2, opc3, fl2)                          \
 GEN_HANDLER2_E(name, #name, 0x3C, opc2 | 0x00, opc3 | 0x00, 0, PPC_NONE, fl2), \
@@ -10731,8 +10746,8 @@ GEN_XX3FORM(xsnmaddadp, 0x04, 0x14, PPC2_VSX),
 GEN_XX3FORM(xsnmaddmdp, 0x04, 0x15, PPC2_VSX),
 GEN_XX3FORM(xsnmsubadp, 0x04, 0x16, PPC2_VSX),
 GEN_XX3FORM(xsnmsubmdp, 0x04, 0x17, PPC2_VSX),
-GEN_XX2FORM(xscmpodp,  0x0C, 0x05, PPC2_VSX),
-GEN_XX2FORM(xscmpudp,  0x0C, 0x04, PPC2_VSX),
+GEN_XX2IFORM(xscmpodp,  0x0C, 0x05, PPC2_VSX),
+GEN_XX2IFORM(xscmpudp,  0x0C, 0x04, PPC2_VSX),
 GEN_XX3FORM(xsmaxdp, 0x00, 0x14, PPC2_VSX),
 GEN_XX3FORM(xsmindp, 0x00, 0x15, PPC2_VSX),
 GEN_XX2FORM(xscvdpsp, 0x12, 0x10, PPC2_VSX),
@@ -11320,9 +11335,9 @@ void ppc_cpu_dump_state(CPUState *cs, FILE *f, fprintf_function cpu_fprintf,
     case POWERPC_MMU_SOFT_74xx:
 #if defined(TARGET_PPC64)
     case POWERPC_MMU_64B:
+    case POWERPC_MMU_2_03:
     case POWERPC_MMU_2_06:
-    case POWERPC_MMU_2_06a:
-    case POWERPC_MMU_2_06d:
+    case POWERPC_MMU_2_07:
 #endif
         cpu_fprintf(f, " SDR1 " TARGET_FMT_lx "   DAR " TARGET_FMT_lx
                        "  DSISR " TARGET_FMT_lx "\n", env->spr[SPR_SDR1],
@@ -11402,17 +11417,13 @@ void ppc_cpu_dump_statistics(CPUState *cs, FILE*f,
 }
 
 /*****************************************************************************/
-static inline void gen_intermediate_code_internal(PowerPCCPU *cpu,
-                                                  TranslationBlock *tb,
-                                                  bool search_pc)
+void gen_intermediate_code(CPUPPCState *env, struct TranslationBlock *tb)
 {
+    PowerPCCPU *cpu = ppc_env_get_cpu(env);
     CPUState *cs = CPU(cpu);
-    CPUPPCState *env = &cpu->env;
     DisasContext ctx, *ctxp = &ctx;
     opc_handler_t **table, *handler;
     target_ulong pc_start;
-    CPUBreakpoint *bp;
-    int j, lj = -1;
     int num_insns;
     int max_insns;
 
@@ -11469,36 +11480,34 @@ static inline void gen_intermediate_code_internal(PowerPCCPU *cpu,
 #endif
     num_insns = 0;
     max_insns = tb->cflags & CF_COUNT_MASK;
-    if (max_insns == 0)
+    if (max_insns == 0) {
         max_insns = CF_COUNT_MASK;
+    }
+    if (max_insns > TCG_MAX_INSNS) {
+        max_insns = TCG_MAX_INSNS;
+    }
 
     gen_tb_start(tb);
     tcg_clear_temp_count();
     /* Set env in case of segfault during code fetch */
     while (ctx.exception == POWERPC_EXCP_NONE && !tcg_op_buf_full()) {
-        if (unlikely(!QTAILQ_EMPTY(&cs->breakpoints))) {
-            QTAILQ_FOREACH(bp, &cs->breakpoints, entry) {
-                if (bp->pc == ctx.nip) {
-                    gen_debug_exception(ctxp);
-                    break;
-                }
-            }
+        tcg_gen_insn_start(ctx.nip);
+        num_insns++;
+
+        if (unlikely(cpu_breakpoint_test(cs, ctx.nip, BP_ANY))) {
+            gen_debug_exception(ctxp);
+            /* The address covered by the breakpoint must be included in
+               [tb->pc, tb->pc + tb->size) in order to for it to be
+               properly cleared -- thus we increment the PC here so that
+               the logic setting tb->size below does the right thing.  */
+            ctx.nip += 4;
+            break;
         }
-        if (unlikely(search_pc)) {
-            j = tcg_op_buf_count();
-            if (lj < j) {
-                lj++;
-                while (lj < j)
-                    tcg_ctx.gen_opc_instr_start[lj++] = 0;
-            }
-            tcg_ctx.gen_opc_pc[lj] = ctx.nip;
-            tcg_ctx.gen_opc_instr_start[lj] = 1;
-            tcg_ctx.gen_opc_icount[lj] = num_insns;
-        }
+
         LOG_DISAS("----------------\n");
         LOG_DISAS("nip=" TARGET_FMT_lx " super=%d ir=%d\n",
                   ctx.nip, ctx.mem_idx, (int)msr_ir);
-        if (num_insns + 1 == max_insns && (tb->cflags & CF_LAST_IO))
+        if (num_insns == max_insns && (tb->cflags & CF_LAST_IO))
             gen_io_start();
         if (unlikely(need_byteswap(&ctx))) {
             ctx.opcode = bswap32(cpu_ldl_code(env, ctx.nip));
@@ -11508,12 +11517,8 @@ static inline void gen_intermediate_code_internal(PowerPCCPU *cpu,
         LOG_DISAS("translate opcode %08x (%02x %02x %02x) (%s)\n",
                     ctx.opcode, opc1(ctx.opcode), opc2(ctx.opcode),
                     opc3(ctx.opcode), ctx.le_mode ? "little" : "big");
-        if (unlikely(qemu_loglevel_mask(CPU_LOG_TB_OP | CPU_LOG_TB_OP_OPT))) {
-            tcg_gen_debug_insn_start(ctx.nip);
-        }
         ctx.nip += 4;
         table = env->opcodes;
-        num_insns++;
         handler = table[opc1(ctx.opcode)];
         if (is_indirect_opcode(handler)) {
             table = ind_table(handler);
@@ -11525,12 +11530,10 @@ static inline void gen_intermediate_code_internal(PowerPCCPU *cpu,
         }
         /* Is opcode *REALLY* valid ? */
         if (unlikely(handler->handler == &gen_invalid)) {
-            if (qemu_log_enabled()) {
-                qemu_log("invalid/unsupported opcode: "
-                         "%02x - %02x - %02x (%08x) " TARGET_FMT_lx " %d\n",
-                         opc1(ctx.opcode), opc2(ctx.opcode),
-                         opc3(ctx.opcode), ctx.opcode, ctx.nip - 4, (int)msr_ir);
-            }
+            qemu_log_mask(LOG_GUEST_ERROR, "invalid/unsupported opcode: "
+                          "%02x - %02x - %02x (%08x) " TARGET_FMT_lx " %d\n",
+                          opc1(ctx.opcode), opc2(ctx.opcode),
+                          opc3(ctx.opcode), ctx.opcode, ctx.nip - 4, (int)msr_ir);
         } else {
             uint32_t inval;
 
@@ -11541,13 +11544,11 @@ static inline void gen_intermediate_code_internal(PowerPCCPU *cpu,
             }
 
             if (unlikely((ctx.opcode & inval) != 0)) {
-                if (qemu_log_enabled()) {
-                    qemu_log("invalid bits: %08x for opcode: "
-                             "%02x - %02x - %02x (%08x) " TARGET_FMT_lx "\n",
-                             ctx.opcode & inval, opc1(ctx.opcode),
-                             opc2(ctx.opcode), opc3(ctx.opcode),
-                             ctx.opcode, ctx.nip - 4);
-                }
+                qemu_log_mask(LOG_GUEST_ERROR, "invalid bits: %08x for opcode: "
+                              "%02x - %02x - %02x (%08x) " TARGET_FMT_lx "\n",
+                              ctx.opcode & inval, opc1(ctx.opcode),
+                              opc2(ctx.opcode), opc3(ctx.opcode),
+                              ctx.opcode, ctx.nip - 4);
                 gen_inval_exception(ctxp, POWERPC_EXCP_INVAL_INVAL);
                 break;
             }
@@ -11592,38 +11593,23 @@ static inline void gen_intermediate_code_internal(PowerPCCPU *cpu,
     }
     gen_tb_end(tb, num_insns);
 
-    if (unlikely(search_pc)) {
-        j = tcg_op_buf_count();
-        lj++;
-        while (lj <= j)
-            tcg_ctx.gen_opc_instr_start[lj++] = 0;
-    } else {
-        tb->size = ctx.nip - pc_start;
-        tb->icount = num_insns;
-    }
+    tb->size = ctx.nip - pc_start;
+    tb->icount = num_insns;
+
 #if defined(DEBUG_DISAS)
     if (qemu_loglevel_mask(CPU_LOG_TB_IN_ASM)) {
         int flags;
         flags = env->bfd_mach;
         flags |= ctx.le_mode << 16;
         qemu_log("IN: %s\n", lookup_symbol(pc_start));
-        log_target_disas(env, pc_start, ctx.nip - pc_start, flags);
+        log_target_disas(cs, pc_start, ctx.nip - pc_start, flags);
         qemu_log("\n");
     }
 #endif
 }
 
-void gen_intermediate_code (CPUPPCState *env, struct TranslationBlock *tb)
+void restore_state_to_opc(CPUPPCState *env, TranslationBlock *tb,
+                          target_ulong *data)
 {
-    gen_intermediate_code_internal(ppc_env_get_cpu(env), tb, false);
-}
-
-void gen_intermediate_code_pc (CPUPPCState *env, struct TranslationBlock *tb)
-{
-    gen_intermediate_code_internal(ppc_env_get_cpu(env), tb, true);
-}
-
-void restore_state_to_opc(CPUPPCState *env, TranslationBlock *tb, int pc_pos)
-{
-    env->nip = tcg_ctx.gen_opc_pc[pc_pos];
+    env->nip = data[0];
 }

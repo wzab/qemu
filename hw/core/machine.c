@@ -11,6 +11,7 @@
  */
 
 #include "hw/boards.h"
+#include "qapi-visit.h"
 #include "qapi/visitor.h"
 #include "hw/sysbus.h"
 #include "sysemu/sysemu.h"
@@ -31,12 +32,39 @@ static void machine_set_accel(Object *obj, const char *value, Error **errp)
     ms->accel = g_strdup(value);
 }
 
-static void machine_set_kernel_irqchip(Object *obj, bool value, Error **errp)
+static void machine_set_kernel_irqchip(Object *obj, Visitor *v,
+                                       void *opaque, const char *name,
+                                       Error **errp)
 {
+    Error *err = NULL;
     MachineState *ms = MACHINE(obj);
+    OnOffSplit mode;
 
-    ms->kernel_irqchip_allowed = value;
-    ms->kernel_irqchip_required = value;
+    visit_type_OnOffSplit(v, &mode, name, &err);
+    if (err) {
+        error_propagate(errp, err);
+        return;
+    } else {
+        switch (mode) {
+        case ON_OFF_SPLIT_ON:
+            ms->kernel_irqchip_allowed = true;
+            ms->kernel_irqchip_required = true;
+            ms->kernel_irqchip_split = false;
+            break;
+        case ON_OFF_SPLIT_OFF:
+            ms->kernel_irqchip_allowed = false;
+            ms->kernel_irqchip_required = false;
+            ms->kernel_irqchip_split = false;
+            break;
+        case ON_OFF_SPLIT_SPLIT:
+            ms->kernel_irqchip_allowed = true;
+            ms->kernel_irqchip_required = true;
+            ms->kernel_irqchip_split = true;
+            break;
+        default:
+            abort();
+        }
+    }
 }
 
 static void machine_get_kvm_shadow_mem(Object *obj, Visitor *v,
@@ -223,6 +251,21 @@ static void machine_set_usb(Object *obj, bool value, Error **errp)
     MachineState *ms = MACHINE(obj);
 
     ms->usb = value;
+    ms->usb_disabled = !value;
+}
+
+static bool machine_get_igd_gfx_passthru(Object *obj, Error **errp)
+{
+    MachineState *ms = MACHINE(obj);
+
+    return ms->igd_gfx_passthru;
+}
+
+static void machine_set_igd_gfx_passthru(Object *obj, bool value, Error **errp)
+{
+    MachineState *ms = MACHINE(obj);
+
+    ms->igd_gfx_passthru = value;
 }
 
 static char *machine_get_firmware(Object *obj, Error **errp)
@@ -293,6 +336,26 @@ static void machine_init_notify(Notifier *notifier, void *data)
     foreach_dynamic_sysbus_device(error_on_sysbus_device, NULL);
 }
 
+static void machine_class_init(ObjectClass *oc, void *data)
+{
+    MachineClass *mc = MACHINE_CLASS(oc);
+
+    /* Default 128 MB as guest ram size */
+    mc->default_ram_size = 128 * M_BYTE;
+    mc->rom_file_has_mr = true;
+}
+
+static void machine_class_base_init(ObjectClass *oc, void *data)
+{
+    if (!object_class_is_abstract(oc)) {
+        MachineClass *mc = MACHINE_CLASS(oc);
+        const char *cname = object_class_get_name(oc);
+        assert(g_str_has_suffix(cname, TYPE_MACHINE_SUFFIX));
+        mc->name = g_strndup(cname,
+                            strlen(cname) - strlen(TYPE_MACHINE_SUFFIX));
+    }
+}
+
 static void machine_initfn(Object *obj)
 {
     MachineState *ms = MACHINE(obj);
@@ -307,12 +370,12 @@ static void machine_initfn(Object *obj)
     object_property_set_description(obj, "accel",
                                     "Accelerator list",
                                     NULL);
-    object_property_add_bool(obj, "kernel-irqchip",
-                             NULL,
-                             machine_set_kernel_irqchip,
-                             NULL);
+    object_property_add(obj, "kernel-irqchip", "OnOffSplit",
+                        NULL,
+                        machine_set_kernel_irqchip,
+                        NULL, NULL, NULL);
     object_property_set_description(obj, "kernel-irqchip",
-                                    "Use KVM in-kernel irqchip",
+                                    "Configure KVM in-kernel irqchip",
                                     NULL);
     object_property_add(obj, "kvm-shadow-mem", "int",
                         machine_get_kvm_shadow_mem,
@@ -379,6 +442,12 @@ static void machine_initfn(Object *obj)
     object_property_set_description(obj, "usb",
                                     "Set on/off to enable/disable usb",
                                     NULL);
+    object_property_add_bool(obj, "igd-passthru",
+                             machine_get_igd_gfx_passthru,
+                             machine_set_igd_gfx_passthru, NULL);
+    object_property_set_description(obj, "igd-passthru",
+                                    "Set on/off to enable/disable igd passthrou",
+                                    NULL);
     object_property_add_str(obj, "firmware",
                             machine_get_firmware,
                             machine_set_firmware, NULL);
@@ -422,11 +491,6 @@ bool machine_usb(MachineState *machine)
     return machine->usb;
 }
 
-bool machine_iommu(MachineState *machine)
-{
-    return machine->iommu;
-}
-
 bool machine_kernel_irqchip_allowed(MachineState *machine)
 {
     return machine->kernel_irqchip_allowed;
@@ -435,6 +499,11 @@ bool machine_kernel_irqchip_allowed(MachineState *machine)
 bool machine_kernel_irqchip_required(MachineState *machine)
 {
     return machine->kernel_irqchip_required;
+}
+
+bool machine_kernel_irqchip_split(MachineState *machine)
+{
+    return machine->kernel_irqchip_split;
 }
 
 int machine_kvm_shadow_mem(MachineState *machine)
@@ -462,6 +531,8 @@ static const TypeInfo machine_info = {
     .parent = TYPE_OBJECT,
     .abstract = true,
     .class_size = sizeof(MachineClass),
+    .class_init    = machine_class_init,
+    .class_base_init = machine_class_base_init,
     .instance_size = sizeof(MachineState),
     .instance_init = machine_initfn,
     .instance_finalize = machine_finalize,

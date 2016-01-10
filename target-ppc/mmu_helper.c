@@ -28,23 +28,22 @@
 //#define DEBUG_BATS
 //#define DEBUG_SOFTWARE_TLB
 //#define DUMP_PAGE_TABLES
-//#define DEBUG_SOFTWARE_TLB
 //#define FLUSH_ALL_TLBS
 
 #ifdef DEBUG_MMU
-#  define LOG_MMU_STATE(cpu) log_cpu_state((cpu), 0)
+#  define LOG_MMU_STATE(cpu) log_cpu_state_mask(CPU_LOG_MMU, (cpu), 0)
 #else
 #  define LOG_MMU_STATE(cpu) do { } while (0)
 #endif
 
 #ifdef DEBUG_SOFTWARE_TLB
-#  define LOG_SWTLB(...) qemu_log(__VA_ARGS__)
+#  define LOG_SWTLB(...) qemu_log_mask(CPU_LOG_MMU, __VA_ARGS__)
 #else
 #  define LOG_SWTLB(...) do { } while (0)
 #endif
 
 #ifdef DEBUG_BATS
-#  define LOG_BATS(...) qemu_log(__VA_ARGS__)
+#  define LOG_BATS(...) qemu_log_mask(CPU_LOG_MMU, __VA_ARGS__)
 #else
 #  define LOG_BATS(...) do { } while (0)
 #endif
@@ -162,7 +161,7 @@ static inline int ppc6xx_tlb_pte_check(mmu_ctx_t *ctx, target_ulong pte0,
             if (ctx->raddr != (hwaddr)-1ULL) {
                 /* all matches should have equal RPN, WIMG & PP */
                 if ((ctx->raddr & mmask) != (pte1 & mmask)) {
-                    qemu_log("Bad RPN/WIMG/PP\n");
+                    qemu_log_mask(CPU_LOG_MMU, "Bad RPN/WIMG/PP\n");
                     return -3;
                 }
             }
@@ -508,7 +507,7 @@ static inline int get_segment_6xx_tlb(CPUPPCState *env, mmu_ctx_t *ctx,
             /* Software TLB search */
             ret = ppc6xx_tlb_check(env, ctx, eaddr, rw, type);
 #if defined(DUMP_PAGE_TABLES)
-            if (qemu_log_enabled()) {
+            if (qemu_log_mask(CPU_LOG_MMU)) {
                 hwaddr curaddr;
                 uint32_t a0, a1, a2, a3;
 
@@ -575,8 +574,8 @@ static inline int get_segment_6xx_tlb(CPUPPCState *env, mmu_ctx_t *ctx,
             /* eciwx or ecowx */
             return -4;
         default:
-            qemu_log("ERROR: instruction should not need "
-                        "address translation\n");
+            qemu_log_mask(CPU_LOG_MMU, "ERROR: instruction should not need "
+                          "address translation\n");
             return -4;
         }
         if ((rw == 1 || ctx->key != 1) && (rw == 0 || ctx->key != 0)) {
@@ -1293,9 +1292,11 @@ void dump_mmu(FILE *f, fprintf_function cpu_fprintf, CPUPPCState *env)
         break;
 #if defined(TARGET_PPC64)
     case POWERPC_MMU_64B:
+    case POWERPC_MMU_2_03:
     case POWERPC_MMU_2_06:
     case POWERPC_MMU_2_06a:
-    case POWERPC_MMU_2_06d:
+    case POWERPC_MMU_2_07:
+    case POWERPC_MMU_2_07a:
         dump_slb(f, cpu_fprintf, env);
         break;
 #endif
@@ -1433,9 +1434,11 @@ hwaddr ppc_cpu_get_phys_page_debug(CPUState *cs, vaddr addr)
     switch (env->mmu_model) {
 #if defined(TARGET_PPC64)
     case POWERPC_MMU_64B:
+    case POWERPC_MMU_2_03:
     case POWERPC_MMU_2_06:
     case POWERPC_MMU_2_06a:
-    case POWERPC_MMU_2_06d:
+    case POWERPC_MMU_2_07:
+    case POWERPC_MMU_2_07a:
         return ppc_hash64_get_phys_page_debug(env, addr);
 #endif
 
@@ -1937,9 +1940,11 @@ void ppc_tlb_invalidate_all(CPUPPCState *env)
     case POWERPC_MMU_601:
 #if defined(TARGET_PPC64)
     case POWERPC_MMU_64B:
+    case POWERPC_MMU_2_03:
     case POWERPC_MMU_2_06:
     case POWERPC_MMU_2_06a:
-    case POWERPC_MMU_2_06d:
+    case POWERPC_MMU_2_07:
+    case POWERPC_MMU_2_07a:
 #endif /* defined(TARGET_PPC64) */
         tlb_flush(CPU(cpu), 1);
         break;
@@ -2011,9 +2016,11 @@ void ppc_tlb_invalidate_one(CPUPPCState *env, target_ulong addr)
         break;
 #if defined(TARGET_PPC64)
     case POWERPC_MMU_64B:
+    case POWERPC_MMU_2_03:
     case POWERPC_MMU_2_06:
     case POWERPC_MMU_2_06a:
-    case POWERPC_MMU_2_06d:
+    case POWERPC_MMU_2_07:
+    case POWERPC_MMU_2_07a:
         /* tlbie invalidate TLBs for all segments */
         /* XXX: given the fact that there are too many segments to invalidate,
          *      and we still don't have a tlb_flush_mask(env, n, mask) in QEMU,
