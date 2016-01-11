@@ -168,8 +168,8 @@ static uint64_t pci_wz_enc1_read(void *opaque, hwaddr addr, unsigned size)
   }
 }
 
-char cipher[] = "rijndael-256";
-char cipher_mode[] = "cbc";
+static char cipher[] = "rijndael-256";
+static char cipher_mode[] = "cbc";
 
 /* called for write accesses to our register memory area */
 
