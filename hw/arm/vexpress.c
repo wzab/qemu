@@ -636,12 +636,12 @@ static void vexpress_common_init(MachineState *machine)
     sysbus_create_simple("pl011", map[VE_UART0], pic[5]);
     sysbus_create_simple("pl011", map[VE_UART1], pic[6]);
     sysbus_create_simple("pl011", map[VE_UART2], pic[7]);
-    sysbus_create_simple("pl011", map[VE_UART3], pic[8]);
+    //sysbus_create_simple("pl011", map[VE_UART3], pic[8]);
 
     sysbus_create_simple("sp804", map[VE_TIMER01], pic[2]);
     sysbus_create_simple("sp804", map[VE_TIMER23], pic[3]);
-    /* Simple BM DMA Crypto engine - model by WZab */
-    sysbus_create_simple("sysbus-wzenc1", map[VE_WZENC1], pic[33]);
+    /* Simple BM DMA Crypto engine - model by WZab we take over interrupt from UART3 */
+    sysbus_create_simple("sysbus-wzenc1", map[VE_WZENC1], pic[8]);
 
 
     /* VE_SERIALDVI: not modelled */
