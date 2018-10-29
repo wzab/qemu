@@ -18,10 +18,10 @@
  *
  */
 
-#include <glib.h>
+#include "qemu/osdep.h"
 
+#include "qapi/error.h"
 #include "qemu/base64.h"
-
 
 static void test_base64_good(void)
 {

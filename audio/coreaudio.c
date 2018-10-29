@@ -22,8 +22,8 @@
  * THE SOFTWARE.
  */
 
+#include "qemu/osdep.h"
 #include <CoreAudio/CoreAudio.h>
-#include <string.h>             /* strerror */
 #include <pthread.h>            /* pthread_X */
 
 #include "qemu-common.h"
@@ -35,8 +35,6 @@
 #ifndef MAC_OS_X_VERSION_10_6
 #define MAC_OS_X_VERSION_10_6 1060
 #endif
-
-static int isAtexit;
 
 typedef struct {
     int buffer_frames;
@@ -378,11 +376,6 @@ static inline UInt32 isPlaying (AudioDeviceID outputDeviceID)
     return result;
 }
 
-static void coreaudio_atexit (void)
-{
-    isAtexit = 1;
-}
-
 static int coreaudio_lock (coreaudioVoiceOut *core, const char *fn_name)
 {
     int err;
@@ -630,7 +623,7 @@ static void coreaudio_fini_out (HWVoiceOut *hw)
     int err;
     coreaudioVoiceOut *core = (coreaudioVoiceOut *) hw;
 
-    if (!isAtexit) {
+    if (!audio_is_cleaning_up()) {
         /* stop playback */
         if (isPlaying(core->outputDeviceID)) {
             status = AudioDeviceStop(core->outputDeviceID, core->ioprocid);
@@ -673,7 +666,7 @@ static int coreaudio_ctl_out (HWVoiceOut *hw, int cmd, ...)
 
     case VOICE_DISABLE:
         /* stop playback */
-        if (!isAtexit) {
+        if (!audio_is_cleaning_up()) {
             if (isPlaying(core->outputDeviceID)) {
                 status = AudioDeviceStop(core->outputDeviceID,
                                          core->ioprocid);
@@ -697,7 +690,6 @@ static void *coreaudio_audio_init (void)
     CoreaudioConf *conf = g_malloc(sizeof(CoreaudioConf));
     *conf = glob_conf;
 
-    atexit(coreaudio_atexit);
     return conf;
 }
 
@@ -730,7 +722,7 @@ static struct audio_pcm_ops coreaudio_pcm_ops = {
     .ctl_out  = coreaudio_ctl_out
 };
 
-struct audio_driver coreaudio_audio_driver = {
+static struct audio_driver coreaudio_audio_driver = {
     .name           = "coreaudio",
     .descr          = "CoreAudio http://developer.apple.com/audio/coreaudio.html",
     .options        = coreaudio_options,
@@ -743,3 +735,9 @@ struct audio_driver coreaudio_audio_driver = {
     .voice_size_out = sizeof (coreaudioVoiceOut),
     .voice_size_in  = 0
 };
+
+static void register_audio_coreaudio(void)
+{
+    audio_driver_register(&coreaudio_audio_driver);
+}
+type_init(register_audio_coreaudio);

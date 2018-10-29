@@ -12,6 +12,8 @@
  * This file implements direct PCI assignment to a HVM guest
  */
 
+#include "qemu/osdep.h"
+#include "qapi/error.h"
 #include "qemu/timer.h"
 #include "hw/xen/xen_backend.h"
 #include "xen_pt.h"
@@ -502,6 +504,8 @@ static int xen_pt_bar_reg_write(XenPCIPassthroughState *s, XenPTReg *cfg_entry,
         bar_ro_mask = XEN_PT_BAR_IO_RO_MASK | (r_size - 1);
         break;
     case XEN_PT_BAR_FLAG_UPPER:
+        assert(index > 0);
+        r_size = d->io_regions[index - 1].size >> 32;
         bar_emu_mask = XEN_PT_BAR_ALLF;
         bar_ro_mask = r_size ? r_size - 1 : 0;
         break;
@@ -1313,6 +1317,22 @@ static int xen_pt_msgdata_reg_write(XenPCIPassthroughState *s,
     return 0;
 }
 
+static int xen_pt_mask_reg_write(XenPCIPassthroughState *s, XenPTReg *cfg_entry,
+                                 uint32_t *val, uint32_t dev_value,
+                                 uint32_t valid_mask)
+{
+    int rc;
+
+    rc = xen_pt_long_reg_write(s, cfg_entry, val, dev_value, valid_mask);
+    if (rc) {
+        return rc;
+    }
+
+    s->msi->mask = *val;
+
+    return 0;
+}
+
 /* MSI Capability Structure reg static information table */
 static XenPTRegInfo xen_pt_emu_reg_msi[] = {
     /* Next Pointer reg */
@@ -1391,7 +1411,7 @@ static XenPTRegInfo xen_pt_emu_reg_msi[] = {
         .emu_mask   = 0xFFFFFFFF,
         .init       = xen_pt_mask_reg_init,
         .u.dw.read  = xen_pt_long_reg_read,
-        .u.dw.write = xen_pt_long_reg_write,
+        .u.dw.write = xen_pt_mask_reg_write,
     },
     /* Mask reg (if PCI_MSI_FLAGS_MASKBIT set, for 64-bit devices) */
     {
@@ -1402,7 +1422,7 @@ static XenPTRegInfo xen_pt_emu_reg_msi[] = {
         .emu_mask   = 0xFFFFFFFF,
         .init       = xen_pt_mask_reg_init,
         .u.dw.read  = xen_pt_long_reg_read,
-        .u.dw.write = xen_pt_long_reg_write,
+        .u.dw.write = xen_pt_mask_reg_write,
     },
     /* Pending reg (if PCI_MSI_FLAGS_MASKBIT set, for 32-bit devices) */
     {
@@ -1533,6 +1553,7 @@ static XenPTRegInfo xen_pt_emu_reg_igd_opregion[] = {
         .offset     = 0x0,
         .size       = 4,
         .init_val   = 0,
+        .emu_mask   = 0xFFFFFFFF,
         .u.dw.read   = xen_pt_intel_opregion_read,
         .u.dw.write  = xen_pt_intel_opregion_write,
     },
@@ -1887,8 +1908,9 @@ static uint8_t find_cap_offset(XenPCIPassthroughState *s, uint8_t cap)
     return 0;
 }
 
-static int xen_pt_config_reg_init(XenPCIPassthroughState *s,
-                                  XenPTRegGroup *reg_grp, XenPTRegInfo *reg)
+static void xen_pt_config_reg_init(XenPCIPassthroughState *s,
+                                   XenPTRegGroup *reg_grp, XenPTRegInfo *reg,
+                                   Error **errp)
 {
     XenPTReg *reg_entry;
     uint32_t data = 0;
@@ -1907,12 +1929,13 @@ static int xen_pt_config_reg_init(XenPCIPassthroughState *s,
                        reg_grp->base_offset + reg->offset, &data);
         if (rc < 0) {
             g_free(reg_entry);
-            return rc;
+            error_setg(errp, "Init emulate register fail");
+            return;
         }
         if (data == XEN_PT_INVALID_REG) {
             /* free unused BAR register entry */
             g_free(reg_entry);
-            return 0;
+            return;
         }
         /* Sync up the data to dev.config */
         offset = reg_grp->base_offset + reg->offset;
@@ -1930,7 +1953,8 @@ static int xen_pt_config_reg_init(XenPCIPassthroughState *s,
         if (rc) {
             /* Serious issues when we cannot read the host values! */
             g_free(reg_entry);
-            return rc;
+            error_setg(errp, "Cannot read host values");
+            return;
         }
         /* Set bits in emu_mask are the ones we emulate. The dev.config shall
          * contain the emulated view of the guest - therefore we flip the mask
@@ -1955,10 +1979,10 @@ static int xen_pt_config_reg_init(XenPCIPassthroughState *s,
             val = data;
 
         if (val & ~size_mask) {
-            XEN_PT_ERR(&s->dev,"Offset 0x%04x:0x%04x expands past register size(%d)!\n",
-                       offset, val, reg->size);
+            error_setg(errp, "Offset 0x%04x:0x%04x expands past"
+                    " register size (%d)", offset, val, reg->size);
             g_free(reg_entry);
-            return -ENXIO;
+            return;
         }
         /* This could be just pci_set_long as we don't modify the bits
          * past reg->size, but in case this routine is run in parallel or the
@@ -1978,13 +2002,12 @@ static int xen_pt_config_reg_init(XenPCIPassthroughState *s,
     }
     /* list add register entry */
     QLIST_INSERT_HEAD(&reg_grp->reg_tbl_list, reg_entry, entries);
-
-    return 0;
 }
 
-int xen_pt_config_init(XenPCIPassthroughState *s)
+void xen_pt_config_init(XenPCIPassthroughState *s, Error **errp)
 {
     int i, rc;
+    Error *err = NULL;
 
     QLIST_INIT(&s->reg_grps);
 
@@ -2027,11 +2050,12 @@ int xen_pt_config_init(XenPCIPassthroughState *s)
                                                   reg_grp_offset,
                                                   &reg_grp_entry->size);
             if (rc < 0) {
-                XEN_PT_LOG(&s->dev, "Failed to initialize %d/%ld, type=0x%x, rc:%d\n",
-                           i, ARRAY_SIZE(xen_pt_emu_reg_grps),
+                error_setg(&err, "Failed to initialize %d/%zu, type = 0x%x,"
+                           " rc: %d", i, ARRAY_SIZE(xen_pt_emu_reg_grps),
                            xen_pt_emu_reg_grps[i].grp_type, rc);
+                error_propagate(errp, err);
                 xen_pt_config_delete(s);
-                return rc;
+                return;
             }
         }
 
@@ -2039,24 +2063,23 @@ int xen_pt_config_init(XenPCIPassthroughState *s)
             if (xen_pt_emu_reg_grps[i].emu_regs) {
                 int j = 0;
                 XenPTRegInfo *regs = xen_pt_emu_reg_grps[i].emu_regs;
+
                 /* initialize capability register */
                 for (j = 0; regs->size != 0; j++, regs++) {
-                    /* initialize capability register */
-                    rc = xen_pt_config_reg_init(s, reg_grp_entry, regs);
-                    if (rc < 0) {
-                        XEN_PT_LOG(&s->dev, "Failed to initialize %d/%ld reg 0x%x in grp_type=0x%x (%d/%ld), rc=%d\n",
-                                   j, ARRAY_SIZE(xen_pt_emu_reg_grps[i].emu_regs),
-                                   regs->offset, xen_pt_emu_reg_grps[i].grp_type,
-                                   i, ARRAY_SIZE(xen_pt_emu_reg_grps), rc);
+                    xen_pt_config_reg_init(s, reg_grp_entry, regs, &err);
+                    if (err) {
+                        error_append_hint(&err, "Failed to init register %d"
+                                " offsets 0x%x in grp_type = 0x%x (%d/%zu)", j,
+                                regs->offset, xen_pt_emu_reg_grps[i].grp_type,
+                                i, ARRAY_SIZE(xen_pt_emu_reg_grps));
+                        error_propagate(errp, err);
                         xen_pt_config_delete(s);
-                        return rc;
+                        return;
                     }
                 }
             }
         }
     }
-
-    return 0;
 }
 
 /* delete all emulate register */

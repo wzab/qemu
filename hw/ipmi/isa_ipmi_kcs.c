@@ -21,10 +21,12 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+#include "qemu/osdep.h"
+#include "qemu/log.h"
+#include "qapi/error.h"
 #include "hw/hw.h"
 #include "hw/ipmi/ipmi.h"
 #include "hw/isa/isa.h"
-#include "hw/i386/pc.h"
 
 #define IPMI_KCS_OBF_BIT        0
 #define IPMI_KCS_IBF_BIT        1
@@ -352,6 +354,35 @@ static void ipmi_kcs_init(IPMIInterface *ii, Error **errp)
     memory_region_init_io(&ik->io, NULL, &ipmi_kcs_io_ops, ii, "ipmi-kcs", 2);
 }
 
+#define TYPE_ISA_IPMI_KCS "isa-ipmi-kcs"
+#define ISA_IPMI_KCS(obj) OBJECT_CHECK(ISAIPMIKCSDevice, (obj), \
+                                       TYPE_ISA_IPMI_KCS)
+
+typedef struct ISAIPMIKCSDevice {
+    ISADevice dev;
+    int32_t isairq;
+    IPMIKCS kcs;
+    uint32_t uuid;
+} ISAIPMIKCSDevice;
+
+static void ipmi_kcs_get_fwinfo(IPMIInterface *ii, IPMIFwInfo *info)
+{
+    ISAIPMIKCSDevice *iik = ISA_IPMI_KCS(ii);
+
+    info->interface_name = "kcs";
+    info->interface_type = IPMI_SMBIOS_KCS;
+    info->ipmi_spec_major_revision = 2;
+    info->ipmi_spec_minor_revision = 0;
+    info->base_address = iik->kcs.io_base;
+    info->i2c_slave_address = iik->kcs.bmc->slave_addr;
+    info->register_length = iik->kcs.io_length;
+    info->register_spacing = 1;
+    info->memspace = IPMI_MEMSPACE_IO;
+    info->irq_type = IPMI_LEVEL_IRQ;
+    info->interrupt_number = iik->isairq;
+    info->uuid = iik->uuid;
+}
+
 static void ipmi_kcs_class_init(IPMIInterfaceClass *iic)
 {
     iic->init = ipmi_kcs_init;
@@ -359,19 +390,8 @@ static void ipmi_kcs_class_init(IPMIInterfaceClass *iic)
     iic->handle_rsp = ipmi_kcs_handle_rsp;
     iic->handle_if_event = ipmi_kcs_handle_event;
     iic->set_irq_enable = ipmi_kcs_set_irq_enable;
+    iic->get_fwinfo = ipmi_kcs_get_fwinfo;
 }
-
-
-#define TYPE_ISA_IPMI_KCS "isa-ipmi-kcs"
-#define ISA_IPMI_KCS(obj) OBJECT_CHECK(ISAIPMIKCSDevice, (obj), \
-                                       TYPE_ISA_IPMI_KCS)
-
-typedef struct ISAIPMIKCSDevice {
-    ISADevice dev;
-    int32 isairq;
-    IPMIKCS kcs;
-    IPMIFwInfo fwinfo;
-} ISAIPMIKCSDevice;
 
 static void ipmi_isa_realize(DeviceState *dev, Error **errp)
 {
@@ -384,6 +404,8 @@ static void ipmi_isa_realize(DeviceState *dev, Error **errp)
         error_setg(errp, "IPMI device requires a bmc attribute to be set");
         return;
     }
+
+    iik->uuid = ipmi_next_uuid();
 
     iik->kcs.bmc->intf = ii;
 
@@ -399,42 +421,71 @@ static void ipmi_isa_realize(DeviceState *dev, Error **errp)
     qdev_set_legacy_instance_id(dev, iik->kcs.io_base, iik->kcs.io_length);
 
     isa_register_ioport(isadev, &iik->kcs.io, iik->kcs.io_base);
-
-    iik->fwinfo.interface_name = "kcs";
-    iik->fwinfo.interface_type = IPMI_SMBIOS_KCS;
-    iik->fwinfo.ipmi_spec_major_revision = 2;
-    iik->fwinfo.ipmi_spec_minor_revision = 0;
-    iik->fwinfo.base_address = iik->kcs.io_base;
-    iik->fwinfo.i2c_slave_address = iik->kcs.bmc->slave_addr;
-    iik->fwinfo.register_length = iik->kcs.io_length;
-    iik->fwinfo.register_spacing = 1;
-    iik->fwinfo.memspace = IPMI_MEMSPACE_IO;
-    iik->fwinfo.irq_type = IPMI_LEVEL_IRQ;
-    iik->fwinfo.interrupt_number = iik->isairq;
-    iik->fwinfo.acpi_parent = "\\_SB.PCI0.ISA";
-    ipmi_add_fwinfo(&iik->fwinfo, errp);
 }
 
-const VMStateDescription vmstate_ISAIPMIKCSDevice = {
+static int ipmi_kcs_vmstate_post_load(void *opaque, int version)
+{
+    IPMIKCS *ik = opaque;
+
+    /* Make sure all the values are sane. */
+    if (ik->outpos >= MAX_IPMI_MSG_SIZE || ik->outlen >= MAX_IPMI_MSG_SIZE ||
+        ik->outpos >= ik->outlen) {
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "ipmi:kcs: vmstate transfer received bad out values: %d %d\n",
+                      ik->outpos, ik->outlen);
+        ik->outpos = 0;
+        ik->outlen = 0;
+    }
+
+    if (ik->inlen >= MAX_IPMI_MSG_SIZE) {
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "ipmi:kcs: vmstate transfer received bad in value: %d\n",
+                      ik->inlen);
+        ik->inlen = 0;
+    }
+
+    return 0;
+}
+
+static bool vmstate_kcs_before_version2(void *opaque, int version)
+{
+    return version <= 1;
+}
+
+static const VMStateDescription vmstate_IPMIKCS = {
+    .name = TYPE_IPMI_INTERFACE_PREFIX "kcs",
+    .version_id = 2,
+    .minimum_version_id = 1,
+    .post_load = ipmi_kcs_vmstate_post_load,
+    .fields      = (VMStateField[]) {
+        VMSTATE_BOOL(obf_irq_set, IPMIKCS),
+        VMSTATE_BOOL(atn_irq_set, IPMIKCS),
+        VMSTATE_UNUSED_TEST(vmstate_kcs_before_version2, 1), /* Was use_irq */
+        VMSTATE_BOOL(irqs_enabled, IPMIKCS),
+        VMSTATE_UINT32(outpos, IPMIKCS),
+        VMSTATE_UINT32_V(outlen, IPMIKCS, 2),
+        VMSTATE_UINT8_ARRAY(outmsg, IPMIKCS, MAX_IPMI_MSG_SIZE),
+        VMSTATE_UINT32_V(inlen, IPMIKCS, 2),
+        VMSTATE_UINT8_ARRAY(inmsg, IPMIKCS, MAX_IPMI_MSG_SIZE),
+        VMSTATE_BOOL(write_end, IPMIKCS),
+        VMSTATE_UINT8(status_reg, IPMIKCS),
+        VMSTATE_UINT8(data_out_reg, IPMIKCS),
+        VMSTATE_INT16(data_in_reg, IPMIKCS),
+        VMSTATE_INT16(cmd_reg, IPMIKCS),
+        VMSTATE_UINT8(waiting_rsp, IPMIKCS),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static const VMStateDescription vmstate_ISAIPMIKCSDevice = {
     .name = TYPE_IPMI_INTERFACE,
-    .version_id = 1,
+    .version_id = 2,
     .minimum_version_id = 1,
     .fields      = (VMStateField[]) {
-        VMSTATE_BOOL(kcs.obf_irq_set, ISAIPMIKCSDevice),
-        VMSTATE_BOOL(kcs.atn_irq_set, ISAIPMIKCSDevice),
-        VMSTATE_BOOL(kcs.use_irq, ISAIPMIKCSDevice),
-        VMSTATE_BOOL(kcs.irqs_enabled, ISAIPMIKCSDevice),
-        VMSTATE_UINT32(kcs.outpos, ISAIPMIKCSDevice),
-        VMSTATE_VBUFFER_UINT32(kcs.outmsg, ISAIPMIKCSDevice, 1, NULL, 0,
-                               kcs.outlen),
-        VMSTATE_VBUFFER_UINT32(kcs.inmsg, ISAIPMIKCSDevice, 1, NULL, 0,
-                               kcs.inlen),
-        VMSTATE_BOOL(kcs.write_end, ISAIPMIKCSDevice),
-        VMSTATE_UINT8(kcs.status_reg, ISAIPMIKCSDevice),
-        VMSTATE_UINT8(kcs.data_out_reg, ISAIPMIKCSDevice),
-        VMSTATE_INT16(kcs.data_in_reg, ISAIPMIKCSDevice),
-        VMSTATE_INT16(kcs.cmd_reg, ISAIPMIKCSDevice),
-        VMSTATE_UINT8(kcs.waiting_rsp, ISAIPMIKCSDevice),
+        VMSTATE_VSTRUCT_TEST(kcs, ISAIPMIKCSDevice, vmstate_kcs_before_version2,
+                             0, vmstate_IPMIKCS, IPMIKCS, 1),
+        VMSTATE_VSTRUCT_V(kcs, ISAIPMIKCSDevice, 2, vmstate_IPMIKCS,
+                          IPMIKCS, 2),
         VMSTATE_END_OF_LIST()
     }
 };
@@ -445,6 +496,11 @@ static void isa_ipmi_kcs_init(Object *obj)
 
     ipmi_bmc_find_and_link(obj, (Object **) &iik->kcs.bmc);
 
+    /*
+     * Version 1 had an incorrect name, it clashed with the BT
+     * IPMI device, so receive it, but transmit a different
+     * version.
+     */
     vmstate_register(NULL, 0, &vmstate_ISAIPMIKCSDevice, iik);
 }
 

@@ -18,8 +18,8 @@
  *
  */
 
-#ifndef QIO_CHANNEL_SOCKET_H__
-#define QIO_CHANNEL_SOCKET_H__
+#ifndef QIO_CHANNEL_SOCKET_H
+#define QIO_CHANNEL_SOCKET_H
 
 #include "io/channel.h"
 #include "io/task.h"
@@ -67,7 +67,7 @@ qio_channel_socket_new(void);
 /**
  * qio_channel_socket_new_fd:
  * @fd: the socket file descriptor
- * @errp: pointer to an uninitialized error object
+ * @errp: pointer to a NULL-initialized error object
  *
  * Create a channel for performing I/O on the socket
  * connection represented by the file descriptor @fd.
@@ -83,7 +83,7 @@ qio_channel_socket_new_fd(int fd,
  * qio_channel_socket_connect_sync:
  * @ioc: the socket channel object
  * @addr: the address to connect to
- * @errp: pointer to an uninitialized error object
+ * @errp: pointer to a NULL-initialized error object
  *
  * Attempt to connect to the address @addr. This method
  * will run in the foreground so the caller will not regain
@@ -101,24 +101,29 @@ int qio_channel_socket_connect_sync(QIOChannelSocket *ioc,
  * @callback: the function to invoke on completion
  * @opaque: user data to pass to @callback
  * @destroy: the function to free @opaque
+ * @context: the context to run the async task. If %NULL, the default
+ *           context will be used.
  *
  * Attempt to connect to the address @addr. This method
  * will run in the background so the caller will regain
  * execution control immediately. The function @callback
- * will be invoked on completion or failure.
+ * will be invoked on completion or failure. The @addr
+ * parameter will be copied, so may be freed as soon
+ * as this function returns without waiting for completion.
  */
 void qio_channel_socket_connect_async(QIOChannelSocket *ioc,
                                       SocketAddress *addr,
                                       QIOTaskFunc callback,
                                       gpointer opaque,
-                                      GDestroyNotify destroy);
+                                      GDestroyNotify destroy,
+                                      GMainContext *context);
 
 
 /**
  * qio_channel_socket_listen_sync:
  * @ioc: the socket channel object
  * @addr: the address to listen to
- * @errp: pointer to an uninitialized error object
+ * @errp: pointer to a NULL-initialized error object
  *
  * Attempt to listen to the address @addr. This method
  * will run in the foreground so the caller will not regain
@@ -136,17 +141,22 @@ int qio_channel_socket_listen_sync(QIOChannelSocket *ioc,
  * @callback: the function to invoke on completion
  * @opaque: user data to pass to @callback
  * @destroy: the function to free @opaque
+ * @context: the context to run the async task. If %NULL, the default
+ *           context will be used.
  *
  * Attempt to listen to the address @addr. This method
  * will run in the background so the caller will regain
  * execution control immediately. The function @callback
- * will be invoked on completion or failure.
+ * will be invoked on completion or failure. The @addr
+ * parameter will be copied, so may be freed as soon
+ * as this function returns without waiting for completion.
  */
 void qio_channel_socket_listen_async(QIOChannelSocket *ioc,
                                      SocketAddress *addr,
                                      QIOTaskFunc callback,
                                      gpointer opaque,
-                                     GDestroyNotify destroy);
+                                     GDestroyNotify destroy,
+                                     GMainContext *context);
 
 
 /**
@@ -154,7 +164,7 @@ void qio_channel_socket_listen_async(QIOChannelSocket *ioc,
  * @ioc: the socket channel object
  * @localAddr: the address to local bind address
  * @remoteAddr: the address to remote peer address
- * @errp: pointer to an uninitialized error object
+ * @errp: pointer to a NULL-initialized error object
  *
  * Attempt to initialize a datagram socket bound to
  * @localAddr and communicating with peer @remoteAddr.
@@ -175,30 +185,36 @@ int qio_channel_socket_dgram_sync(QIOChannelSocket *ioc,
  * @callback: the function to invoke on completion
  * @opaque: user data to pass to @callback
  * @destroy: the function to free @opaque
+ * @context: the context to run the async task. If %NULL, the default
+ *           context will be used.
  *
  * Attempt to initialize a datagram socket bound to
  * @localAddr and communicating with peer @remoteAddr.
  * This method will run in the background so the caller
  * will regain execution control immediately. The function
  * @callback will be invoked on completion or failure.
+ * The @localAddr and @remoteAddr parameters will be copied,
+ * so may be freed as soon as this function returns without
+ * waiting for completion.
  */
 void qio_channel_socket_dgram_async(QIOChannelSocket *ioc,
                                     SocketAddress *localAddr,
                                     SocketAddress *remoteAddr,
                                     QIOTaskFunc callback,
                                     gpointer opaque,
-                                    GDestroyNotify destroy);
+                                    GDestroyNotify destroy,
+                                    GMainContext *context);
 
 
 /**
  * qio_channel_socket_get_local_address:
  * @ioc: the socket channel object
- * @errp: pointer to an uninitialized error object
+ * @errp: pointer to a NULL-initialized error object
  *
  * Get the string representation of the local socket
  * address. A pointer to the allocated address information
  * struct will be returned, which the caller is required to
- * release with a call qapi_free_SocketAddress when no
+ * release with a call qapi_free_SocketAddress() when no
  * longer required.
  *
  * Returns: 0 on success, -1 on error
@@ -210,12 +226,12 @@ qio_channel_socket_get_local_address(QIOChannelSocket *ioc,
 /**
  * qio_channel_socket_get_remote_address:
  * @ioc: the socket channel object
- * @errp: pointer to an uninitialized error object
+ * @errp: pointer to a NULL-initialized error object
  *
  * Get the string representation of the local socket
  * address. A pointer to the allocated address information
  * struct will be returned, which the caller is required to
- * release with a call qapi_free_SocketAddress when no
+ * release with a call qapi_free_SocketAddress() when no
  * longer required.
  *
  * Returns: the socket address struct, or NULL on error
@@ -228,7 +244,7 @@ qio_channel_socket_get_remote_address(QIOChannelSocket *ioc,
 /**
  * qio_channel_socket_accept:
  * @ioc: the socket channel object
- * @errp: pointer to an uninitialized error object
+ * @errp: pointer to a NULL-initialized error object
  *
  * If the socket represents a server, then this accepts
  * a new client connection. The returned channel will
@@ -241,4 +257,4 @@ qio_channel_socket_accept(QIOChannelSocket *ioc,
                           Error **errp);
 
 
-#endif /* QIO_CHANNEL_SOCKET_H__ */
+#endif /* QIO_CHANNEL_SOCKET_H */

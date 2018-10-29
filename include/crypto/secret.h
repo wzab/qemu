@@ -18,11 +18,10 @@
  *
  */
 
-#ifndef QCRYPTO_SECRET_H__
-#define QCRYPTO_SECRET_H__
+#ifndef QCRYPTO_SECRET_H
+#define QCRYPTO_SECRET_H
 
-#include "qemu-common.h"
-#include "qapi/error.h"
+#include "qapi/qapi-types-crypto.h"
 #include "qom/object.h"
 
 #define TYPE_QCRYPTO_SECRET "secret"
@@ -145,4 +144,4 @@ extern char *qcrypto_secret_lookup_as_utf8(const char *secretid,
 extern char *qcrypto_secret_lookup_as_base64(const char *secretid,
                                              Error **errp);
 
-#endif /* QCRYPTO_SECRET_H__ */
+#endif /* QCRYPTO_SECRET_H */

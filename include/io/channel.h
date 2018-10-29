@@ -18,12 +18,13 @@
  *
  */
 
-#ifndef QIO_CHANNEL_H__
-#define QIO_CHANNEL_H__
+#ifndef QIO_CHANNEL_H
+#define QIO_CHANNEL_H
 
 #include "qemu-common.h"
-#include "qapi/error.h"
 #include "qom/object.h"
+#include "qemu/coroutine.h"
+#include "block/aio.h"
 
 #define TYPE_QIO_CHANNEL "qio-channel"
 #define QIO_CHANNEL(obj)                                    \
@@ -41,8 +42,9 @@ typedef struct QIOChannelClass QIOChannelClass;
 typedef enum QIOChannelFeature QIOChannelFeature;
 
 enum QIOChannelFeature {
-    QIO_CHANNEL_FEATURE_FD_PASS  = (1 << 0),
-    QIO_CHANNEL_FEATURE_SHUTDOWN = (1 << 1),
+    QIO_CHANNEL_FEATURE_FD_PASS,
+    QIO_CHANNEL_FEATURE_SHUTDOWN,
+    QIO_CHANNEL_FEATURE_LISTEN,
 };
 
 
@@ -79,6 +81,13 @@ typedef gboolean (*QIOChannelFunc)(QIOChannel *ioc,
 struct QIOChannel {
     Object parent;
     unsigned int features; /* bitmask of QIOChannelFeatures */
+    char *name;
+    AioContext *ctx;
+    Coroutine *read_coroutine;
+    Coroutine *write_coroutine;
+#ifdef _WIN32
+    HANDLE event; /* For use with GSource on Win32 */
+#endif
 };
 
 /**
@@ -128,6 +137,11 @@ struct QIOChannelClass {
                      off_t offset,
                      int whence,
                      Error **errp);
+    void (*io_set_aio_fd_handler)(QIOChannel *ioc,
+                                  AioContext *ctx,
+                                  IOHandler *io_read,
+                                  IOHandler *io_write,
+                                  void *opaque);
 };
 
 /* General I/O handling functions */
@@ -146,13 +160,35 @@ bool qio_channel_has_feature(QIOChannel *ioc,
                              QIOChannelFeature feature);
 
 /**
+ * qio_channel_set_feature:
+ * @ioc: the channel object
+ * @feature: the feature to set support for
+ *
+ * Add channel support for the feature named in @feature.
+ */
+void qio_channel_set_feature(QIOChannel *ioc,
+                             QIOChannelFeature feature);
+
+/**
+ * qio_channel_set_name:
+ * @ioc: the channel object
+ * @name: the name of the channel
+ *
+ * Sets the name of the channel, which serves as an aid
+ * to debugging. The name is used when creating GSource
+ * watches for this channel.
+ */
+void qio_channel_set_name(QIOChannel *ioc,
+                          const char *name);
+
+/**
  * qio_channel_readv_full:
  * @ioc: the channel object
  * @iov: the array of memory regions to read data into
  * @niov: the length of the @iov array
  * @fds: pointer to an array that will received file handles
  * @nfds: pointer filled with number of elements in @fds on return
- * @errp: pointer to an uninitialized error object
+ * @errp: pointer to a NULL-initialized error object
  *
  * Read data from the IO channel, storing it in the
  * memory regions referenced by @iov. Each element
@@ -198,7 +234,7 @@ ssize_t qio_channel_readv_full(QIOChannel *ioc,
  * @niov: the length of the @iov array
  * @fds: an array of file handles to send
  * @nfds: number of file handles in @fds
- * @errp: pointer to an uninitialized error object
+ * @errp: pointer to a NULL-initialized error object
  *
  * Write data to the IO channel, reading it from the
  * memory regions referenced by @iov. Each element
@@ -233,11 +269,93 @@ ssize_t qio_channel_writev_full(QIOChannel *ioc,
                                 Error **errp);
 
 /**
+ * qio_channel_readv_all_eof:
+ * @ioc: the channel object
+ * @iov: the array of memory regions to read data into
+ * @niov: the length of the @iov array
+ * @errp: pointer to a NULL-initialized error object
+ *
+ * Read data from the IO channel, storing it in the
+ * memory regions referenced by @iov. Each element
+ * in the @iov will be fully populated with data
+ * before the next one is used. The @niov parameter
+ * specifies the total number of elements in @iov.
+ *
+ * The function will wait for all requested data
+ * to be read, yielding from the current coroutine
+ * if required.
+ *
+ * If end-of-file occurs before any data is read,
+ * no error is reported; otherwise, if it occurs
+ * before all requested data has been read, an error
+ * will be reported.
+ *
+ * Returns: 1 if all bytes were read, 0 if end-of-file
+ *          occurs without data, or -1 on error
+ */
+int qio_channel_readv_all_eof(QIOChannel *ioc,
+                              const struct iovec *iov,
+                              size_t niov,
+                              Error **errp);
+
+/**
+ * qio_channel_readv_all:
+ * @ioc: the channel object
+ * @iov: the array of memory regions to read data into
+ * @niov: the length of the @iov array
+ * @errp: pointer to a NULL-initialized error object
+ *
+ * Read data from the IO channel, storing it in the
+ * memory regions referenced by @iov. Each element
+ * in the @iov will be fully populated with data
+ * before the next one is used. The @niov parameter
+ * specifies the total number of elements in @iov.
+ *
+ * The function will wait for all requested data
+ * to be read, yielding from the current coroutine
+ * if required.
+ *
+ * If end-of-file occurs before all requested data
+ * has been read, an error will be reported.
+ *
+ * Returns: 0 if all bytes were read, or -1 on error
+ */
+int qio_channel_readv_all(QIOChannel *ioc,
+                          const struct iovec *iov,
+                          size_t niov,
+                          Error **errp);
+
+
+/**
+ * qio_channel_writev_all:
+ * @ioc: the channel object
+ * @iov: the array of memory regions to write data from
+ * @niov: the length of the @iov array
+ * @errp: pointer to a NULL-initialized error object
+ *
+ * Write data to the IO channel, reading it from the
+ * memory regions referenced by @iov. Each element
+ * in the @iov will be fully sent, before the next
+ * one is used. The @niov parameter specifies the
+ * total number of elements in @iov.
+ *
+ * The function will wait for all requested data
+ * to be written, yielding from the current coroutine
+ * if required.
+ *
+ * Returns: 0 if all bytes were written, or -1 on error
+ */
+int qio_channel_writev_all(QIOChannel *ioc,
+                           const struct iovec *iov,
+                           size_t niov,
+                           Error **erp);
+
+/**
  * qio_channel_readv:
  * @ioc: the channel object
  * @iov: the array of memory regions to read data into
  * @niov: the length of the @iov array
- * @errp: pointer to an uninitialized error object
+ * @errp: pointer to a NULL-initialized error object
  *
  * Behaves as qio_channel_readv_full() but does not support
  * receiving of file handles.
@@ -252,7 +370,7 @@ ssize_t qio_channel_readv(QIOChannel *ioc,
  * @ioc: the channel object
  * @iov: the array of memory regions to write data from
  * @niov: the length of the @iov array
- * @errp: pointer to an uninitialized error object
+ * @errp: pointer to a NULL-initialized error object
  *
  * Behaves as qio_channel_writev_full() but does not support
  * sending of file handles.
@@ -263,11 +381,11 @@ ssize_t qio_channel_writev(QIOChannel *ioc,
                            Error **errp);
 
 /**
- * qio_channel_readv:
+ * qio_channel_read:
  * @ioc: the channel object
  * @buf: the memory region to read data into
  * @buflen: the length of @buf
- * @errp: pointer to an uninitialized error object
+ * @errp: pointer to a NULL-initialized error object
  *
  * Behaves as qio_channel_readv_full() but does not support
  * receiving of file handles, and only supports reading into
@@ -279,11 +397,11 @@ ssize_t qio_channel_read(QIOChannel *ioc,
                          Error **errp);
 
 /**
- * qio_channel_writev:
+ * qio_channel_write:
  * @ioc: the channel object
  * @buf: the memory regions to send data from
  * @buflen: the length of @buf
- * @errp: pointer to an uninitialized error object
+ * @errp: pointer to a NULL-initialized error object
  *
  * Behaves as qio_channel_writev_full() but does not support
  * sending of file handles, and only supports writing from a
@@ -295,10 +413,71 @@ ssize_t qio_channel_write(QIOChannel *ioc,
                           Error **errp);
 
 /**
+ * qio_channel_read_all_eof:
+ * @ioc: the channel object
+ * @buf: the memory region to read data into
+ * @buflen: the number of bytes to @buf
+ * @errp: pointer to a NULL-initialized error object
+ *
+ * Reads @buflen bytes into @buf, possibly blocking or (if the
+ * channel is non-blocking) yielding from the current coroutine
+ * multiple times until the entire content is read. If end-of-file
+ * occurs immediately it is not an error, but if it occurs after
+ * data has been read it will return an error rather than a
+ * short-read. Otherwise behaves as qio_channel_read().
+ *
+ * Returns: 1 if all bytes were read, 0 if end-of-file occurs
+ *          without data, or -1 on error
+ */
+int qio_channel_read_all_eof(QIOChannel *ioc,
+                             char *buf,
+                             size_t buflen,
+                             Error **errp);
+
+/**
+ * qio_channel_read_all:
+ * @ioc: the channel object
+ * @buf: the memory region to read data into
+ * @buflen: the number of bytes to @buf
+ * @errp: pointer to a NULL-initialized error object
+ *
+ * Reads @buflen bytes into @buf, possibly blocking or (if the
+ * channel is non-blocking) yielding from the current coroutine
+ * multiple times until the entire content is read. If end-of-file
+ * occurs it will return an error rather than a short-read. Otherwise
+ * behaves as qio_channel_read().
+ *
+ * Returns: 0 if all bytes were read, or -1 on error
+ */
+int qio_channel_read_all(QIOChannel *ioc,
+                         char *buf,
+                         size_t buflen,
+                         Error **errp);
+
+/**
+ * qio_channel_write_all:
+ * @ioc: the channel object
+ * @buf: the memory region to write data into
+ * @buflen: the number of bytes to @buf
+ * @errp: pointer to a NULL-initialized error object
+ *
+ * Writes @buflen bytes from @buf, possibly blocking or (if the
+ * channel is non-blocking) yielding from the current coroutine
+ * multiple times until the entire content is written.  Otherwise
+ * behaves as qio_channel_write().
+ *
+ * Returns: 0 if all bytes were written, or -1 on error
+ */
+int qio_channel_write_all(QIOChannel *ioc,
+                          const char *buf,
+                          size_t buflen,
+                          Error **errp);
+
+/**
  * qio_channel_set_blocking:
  * @ioc: the channel object
  * @enabled: the blocking flag state
- * @errp: pointer to an uninitialized error object
+ * @errp: pointer to a NULL-initialized error object
  *
  * If @enabled is true, then the channel is put into
  * blocking mode, otherwise it will be non-blocking.
@@ -314,7 +493,7 @@ int qio_channel_set_blocking(QIOChannel *ioc,
 /**
  * qio_channel_close:
  * @ioc: the channel object
- * @errp: pointer to an uninitialized error object
+ * @errp: pointer to a NULL-initialized error object
  *
  * Close the channel, flushing any pending I/O
  *
@@ -327,7 +506,7 @@ int qio_channel_close(QIOChannel *ioc,
  * qio_channel_shutdown:
  * @ioc: the channel object
  * @how: the direction to shutdown
- * @errp: pointer to an uninitialized error object
+ * @errp: pointer to a NULL-initialized error object
  *
  * Shutdowns transmission and/or receiving of data
  * without closing the underlying transport.
@@ -403,7 +582,7 @@ void qio_channel_set_cork(QIOChannel *ioc,
  * @ioc: the channel object
  * @offset: the position to seek to, relative to @whence
  * @whence: one of the (POSIX) SEEK_* constants listed below
- * @errp: pointer to an uninitialized error object
+ * @errp: pointer to a NULL-initialized error object
  *
  * Moves the current I/O position within the channel
  * @ioc, to be @offset. The value of @offset is
@@ -469,15 +648,96 @@ guint qio_channel_add_watch(QIOChannel *ioc,
                             gpointer user_data,
                             GDestroyNotify notify);
 
+/**
+ * qio_channel_add_watch_full:
+ * @ioc: the channel object
+ * @condition: the I/O condition to monitor
+ * @func: callback to invoke when the source becomes ready
+ * @user_data: opaque data to pass to @func
+ * @notify: callback to free @user_data
+ * @context: the context to run the watch source
+ *
+ * Similar as qio_channel_add_watch(), but allows to specify context
+ * to run the watch source.
+ *
+ * Returns: the source ID
+ */
+guint qio_channel_add_watch_full(QIOChannel *ioc,
+                                 GIOCondition condition,
+                                 QIOChannelFunc func,
+                                 gpointer user_data,
+                                 GDestroyNotify notify,
+                                 GMainContext *context);
+
+/**
+ * qio_channel_add_watch_source:
+ * @ioc: the channel object
+ * @condition: the I/O condition to monitor
+ * @func: callback to invoke when the source becomes ready
+ * @user_data: opaque data to pass to @func
+ * @notify: callback to free @user_data
+ * @context: gcontext to bind the source to
+ *
+ * Similar as qio_channel_add_watch(), but allows to specify context
+ * to run the watch source, meanwhile return the GSource object
+ * instead of tag ID, with the GSource referenced already.
+ *
+ * Note: callers is responsible to unref the source when not needed.
+ *
+ * Returns: the source pointer
+ */
+GSource *qio_channel_add_watch_source(QIOChannel *ioc,
+                                      GIOCondition condition,
+                                      QIOChannelFunc func,
+                                      gpointer user_data,
+                                      GDestroyNotify notify,
+                                      GMainContext *context);
+
+/**
+ * qio_channel_attach_aio_context:
+ * @ioc: the channel object
+ * @ctx: the #AioContext to set the handlers on
+ *
+ * Request that qio_channel_yield() sets I/O handlers on
+ * the given #AioContext.  If @ctx is %NULL, qio_channel_yield()
+ * uses QEMU's main thread event loop.
+ *
+ * You can move a #QIOChannel from one #AioContext to another even if
+ * I/O handlers are set for a coroutine.  However, #QIOChannel provides
+ * no synchronization between the calls to qio_channel_yield() and
+ * qio_channel_attach_aio_context().
+ *
+ * Therefore you should first call qio_channel_detach_aio_context()
+ * to ensure that the coroutine is not entered concurrently.  Then,
+ * while the coroutine has yielded, call qio_channel_attach_aio_context(),
+ * and then aio_co_schedule() to place the coroutine on the new
+ * #AioContext.  The calls to qio_channel_detach_aio_context()
+ * and qio_channel_attach_aio_context() should be protected with
+ * aio_context_acquire() and aio_context_release().
+ */
+void qio_channel_attach_aio_context(QIOChannel *ioc,
+                                    AioContext *ctx);
+
+/**
+ * qio_channel_detach_aio_context:
+ * @ioc: the channel object
+ *
+ * Disable any I/O handlers set by qio_channel_yield().  With the
+ * help of aio_co_schedule(), this allows moving a coroutine that was
+ * paused by qio_channel_yield() to another context.
+ */
+void qio_channel_detach_aio_context(QIOChannel *ioc);
 
 /**
  * qio_channel_yield:
  * @ioc: the channel object
  * @condition: the I/O condition to wait for
  *
- * Yields execution from the current coroutine until
- * the condition indicated by @condition becomes
- * available.
+ * Yields execution from the current coroutine until the condition
+ * indicated by @condition becomes available.  @condition must
+ * be either %G_IO_IN or %G_IO_OUT; it cannot contain both.  In
+ * addition, no two coroutine can be waiting on the same condition
+ * and channel at the same time.
  *
  * This must only be called from coroutine context
  */
@@ -499,4 +759,23 @@ void qio_channel_yield(QIOChannel *ioc,
 void qio_channel_wait(QIOChannel *ioc,
                       GIOCondition condition);
 
-#endif /* QIO_CHANNEL_H__ */
+/**
+ * qio_channel_set_aio_fd_handler:
+ * @ioc: the channel object
+ * @ctx: the AioContext to set the handlers on
+ * @io_read: the read handler
+ * @io_write: the write handler
+ * @opaque: the opaque value passed to the handler
+ *
+ * This is used internally by qio_channel_yield().  It can
+ * be used by channel implementations to forward the handlers
+ * to another channel (e.g. from #QIOChannelTLS to the
+ * underlying socket).
+ */
+void qio_channel_set_aio_fd_handler(QIOChannel *ioc,
+                                    AioContext *ctx,
+                                    IOHandler *io_read,
+                                    IOHandler *io_write,
+                                    void *opaque);
+
+#endif /* QIO_CHANNEL_H */
