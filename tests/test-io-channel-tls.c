@@ -21,14 +21,13 @@
  */
 
 
-#include <stdlib.h>
-#include <fcntl.h>
+#include "qemu/osdep.h"
 
-#include "config-host.h"
 #include "crypto-tls-x509-helpers.h"
 #include "io/channel-tls.h"
 #include "io/channel-socket.h"
 #include "io-channel-helpers.h"
+#include "crypto/init.h"
 #include "crypto/tlscredsx509.h"
 #include "qemu/acl.h"
 #include "qom/object_interfaces.h"
@@ -54,14 +53,13 @@ struct QIOChannelTLSHandshakeData {
     bool failed;
 };
 
-static void test_tls_handshake_done(Object *source,
-                                    Error *err,
+static void test_tls_handshake_done(QIOTask *task,
                                     gpointer opaque)
 {
     struct QIOChannelTLSHandshakeData *data = opaque;
 
     data->finished = true;
-    data->failed = err != NULL;
+    data->failed = qio_task_propagate_error(task, NULL);
 }
 
 
@@ -80,6 +78,7 @@ static QCryptoTLSCreds *test_tls_creds_create(QCryptoTLSCredsEndpoint endpoint,
                      "server" : "client"),
         "dir", certdir,
         "verify-peer", "yes",
+        "priority", "NORMAL",
         /* We skip initial sanity checks here because we
          * want to make sure that problems are being
          * detected at the TLS session validation stage,
@@ -129,8 +128,8 @@ static void test_io_channel_tls(const void *opaque)
     /* We'll use this for our fake client-server connection */
     g_assert(socketpair(AF_UNIX, SOCK_STREAM, 0, channel) == 0);
 
-#define CLIENT_CERT_DIR "tests/test-crypto-tlssession-client/"
-#define SERVER_CERT_DIR "tests/test-crypto-tlssession-server/"
+#define CLIENT_CERT_DIR "tests/test-io-channel-tls-client/"
+#define SERVER_CERT_DIR "tests/test-io-channel-tls-server/"
     mkdir(CLIENT_CERT_DIR, 0700);
     mkdir(SERVER_CERT_DIR, 0700);
 
@@ -205,10 +204,12 @@ static void test_io_channel_tls(const void *opaque)
     qio_channel_tls_handshake(clientChanTLS,
                               test_tls_handshake_done,
                               &clientHandshake,
+                              NULL,
                               NULL);
     qio_channel_tls_handshake(serverChanTLS,
                               test_tls_handshake_done,
                               &serverHandshake,
+                              NULL,
                               NULL);
 
     /*
@@ -220,7 +221,7 @@ static void test_io_channel_tls(const void *opaque)
     mainloop = g_main_context_default();
     do {
         g_main_context_iteration(mainloop, TRUE);
-    } while (!clientHandshake.finished &&
+    } while (!clientHandshake.finished ||
              !serverHandshake.finished);
 
     g_assert(clientHandshake.failed == data->expectClientFail);
@@ -266,6 +267,8 @@ static void test_io_channel_tls(const void *opaque)
 int main(int argc, char **argv)
 {
     int ret;
+
+    g_assert(qcrypto_init(NULL) == 0);
 
     module_call_init(MODULE_INIT_QOM);
     g_test_init(&argc, &argv, NULL);

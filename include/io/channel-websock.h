@@ -18,8 +18,8 @@
  *
  */
 
-#ifndef QIO_CHANNEL_WEBSOCK_H__
-#define QIO_CHANNEL_WEBSOCK_H__
+#ifndef QIO_CHANNEL_WEBSOCK_H
+#define QIO_CHANNEL_WEBSOCK_H
 
 #include "io/channel.h"
 #include "qemu/buffer.h"
@@ -59,12 +59,13 @@ struct QIOChannelWebsock {
     Buffer encinput;
     Buffer encoutput;
     Buffer rawinput;
-    Buffer rawoutput;
     size_t payload_remain;
+    size_t pong_remain;
     QIOChannelWebsockMask mask;
     guint io_tag;
     Error *io_err;
     gboolean io_eof;
+    uint8_t opcode;
 };
 
 /**
@@ -105,4 +106,4 @@ void qio_channel_websock_handshake(QIOChannelWebsock *ioc,
                                    gpointer opaque,
                                    GDestroyNotify destroy);
 
-#endif /* QIO_CHANNEL_WEBSOCK_H__ */
+#endif /* QIO_CHANNEL_WEBSOCK_H */

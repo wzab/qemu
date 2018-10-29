@@ -22,11 +22,15 @@
  *  with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "qemu/osdep.h"
+#include "qapi/error.h"
+#include "qemu-common.h"
+#include "cpu.h"
 #include "hw/arm/fsl-imx25.h"
 #include "sysemu/sysemu.h"
 #include "exec/address-spaces.h"
 #include "hw/boards.h"
-#include "sysemu/char.h"
+#include "chardev/char.h"
 
 static void fsl_imx25_init(Object *obj)
 {
@@ -47,7 +51,7 @@ static void fsl_imx25_init(Object *obj)
     }
 
     for (i = 0; i < FSL_IMX25_NUM_GPTS; i++) {
-        object_initialize(&s->gpt[i], sizeof(s->gpt[i]), TYPE_IMX_GPT);
+        object_initialize(&s->gpt[i], sizeof(s->gpt[i]), TYPE_IMX25_GPT);
         qdev_set_parent_bus(DEVICE(&s->gpt[i]), sysbus_get_default());
     }
 
@@ -114,14 +118,14 @@ static void fsl_imx25_realize(DeviceState *dev, Error **errp)
         };
 
         if (i < MAX_SERIAL_PORTS) {
-            CharDriverState *chr;
+            Chardev *chr;
 
             chr = serial_hds[i];
 
             if (!chr) {
                 char label[20];
                 snprintf(label, sizeof(label), "imx31.uart%d", i);
-                chr = qemu_chr_new(label, "null", NULL);
+                chr = qemu_chr_new(label, "null");
             }
 
             qdev_prop_set_chr(DEVICE(&s->uart[i]), "chardev", chr);
@@ -187,6 +191,7 @@ static void fsl_imx25_realize(DeviceState *dev, Error **errp)
     }
 
     qdev_set_nic_properties(DEVICE(&s->fec), &nd_table[0]);
+
     object_property_set_bool(OBJECT(&s->fec), true, "realized", &err);
     if (err) {
         error_propagate(errp, err);
@@ -244,16 +249,16 @@ static void fsl_imx25_realize(DeviceState *dev, Error **errp)
     }
 
     /* initialize 2 x 16 KB ROM */
-    memory_region_init_rom_device(&s->rom[0], NULL, NULL, NULL,
-                                  "imx25.rom0", FSL_IMX25_ROM0_SIZE, &err);
+    memory_region_init_rom(&s->rom[0], NULL,
+                           "imx25.rom0", FSL_IMX25_ROM0_SIZE, &err);
     if (err) {
         error_propagate(errp, err);
         return;
     }
     memory_region_add_subregion(get_system_memory(), FSL_IMX25_ROM0_ADDR,
                                 &s->rom[0]);
-    memory_region_init_rom_device(&s->rom[1], NULL, NULL, NULL,
-                                  "imx25.rom1", FSL_IMX25_ROM1_SIZE, &err);
+    memory_region_init_rom(&s->rom[1], NULL,
+                           "imx25.rom1", FSL_IMX25_ROM1_SIZE, &err);
     if (err) {
         error_propagate(errp, err);
         return;
@@ -270,7 +275,6 @@ static void fsl_imx25_realize(DeviceState *dev, Error **errp)
     }
     memory_region_add_subregion(get_system_memory(), FSL_IMX25_IRAM_ADDR,
                                 &s->iram);
-    vmstate_register_ram_global(&s->iram);
 
     /* internal RAM (128 KB) is aliased over 128 MB - 128 KB */
     memory_region_init_alias(&s->iram_alias, NULL, "imx25.iram_alias",
@@ -284,12 +288,12 @@ static void fsl_imx25_class_init(ObjectClass *oc, void *data)
     DeviceClass *dc = DEVICE_CLASS(oc);
 
     dc->realize = fsl_imx25_realize;
-
+    dc->desc = "i.MX25 SOC";
     /*
-     * Reason: creates an ARM CPU, thus use after free(), see
-     * arm_cpu_class_init()
+     * Reason: uses serial_hds in realize and the imx25 board does not
+     * support multiple CPUs
      */
-    dc->cannot_destroy_with_object_finalize_yet = true;
+    dc->user_creatable = false;
 }
 
 static const TypeInfo fsl_imx25_type_info = {

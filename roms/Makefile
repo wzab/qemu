@@ -1,11 +1,13 @@
 
 vgabios_variants := stdvga cirrus vmware qxl isavga virtio
 vgabios_targets  := $(subst -isavga,,$(patsubst %,vgabios-%.bin,$(vgabios_variants)))
-pxerom_variants  := e1000 eepro100 ne2k_pci pcnet rtl8139 virtio
-pxerom_targets   := 8086100e 80861209 10500940 10222000 10ec8139 1af41000
+pxerom_variants  := e1000 e1000e eepro100 ne2k_pci pcnet rtl8139 virtio vmxnet3
+pxerom_targets   := 8086100e 808610d3 80861209 10500940 10222000 10ec8139 1af41000 15ad07b0
 
 pxe-rom-e1000    efi-rom-e1000    : VID := 8086
 pxe-rom-e1000    efi-rom-e1000    : DID := 100e
+pxe-rom-e1000e   efi-rom-e1000e   : VID := 8086
+pxe-rom-e1000e   efi-rom-e1000e   : DID := 10d3
 pxe-rom-eepro100 efi-rom-eepro100 : VID := 8086
 pxe-rom-eepro100 efi-rom-eepro100 : DID := 1209
 pxe-rom-ne2k_pci efi-rom-ne2k_pci : VID := 1050
@@ -16,6 +18,8 @@ pxe-rom-rtl8139  efi-rom-rtl8139  : VID := 10ec
 pxe-rom-rtl8139  efi-rom-rtl8139  : DID := 8139
 pxe-rom-virtio   efi-rom-virtio   : VID := 1af4
 pxe-rom-virtio   efi-rom-virtio   : DID := 1000
+pxe-rom-vmxnet3  efi-rom-vmxnet3  : VID := 15ad
+pxe-rom-vmxnet3  efi-rom-vmxnet3  : DID := 07b0
 
 #
 # cross compiler auto detection
@@ -59,7 +63,9 @@ default:
 	@echo "  efirom         -- update nic roms (bios+efi, this needs"
 	@echo "                    the EfiRom utility from edk2 / tianocore)"
 	@echo "  slof           -- update slof.bin"
+	@echo "  skiboot        -- update skiboot.lid"
 	@echo "  u-boot.e500    -- update u-boot.e500"
+	@echo "  u-boot.sam460  -- update u-boot.sam460"
 
 bios: build-seabios-config-seabios-128k build-seabios-config-seabios-256k
 	cp seabios/builds/seabios-128k/bios.bin ../pc-bios/bios.bin
@@ -99,7 +105,7 @@ build-lgplvgabios:
 	$(MAKE) -C vgabios $(vgabios_targets)
 
 
-.PHONY: sgabios
+.PHONY: sgabios skiboot
 sgabios:
 	$(MAKE) -C sgabios
 	cp sgabios/sgabios.bin ../pc-bios
@@ -142,6 +148,15 @@ u-boot.e500:
 	$(powerpc_cross_prefix)strip u-boot/build.e500/u-boot -o \
 		../pc-bios/u-boot.e500
 
+u-boot.sam460:
+	$(MAKE) -C u-boot-sam460ex Sam460ex_config
+	$(MAKE) -C u-boot-sam460ex CROSS_COMPILE=$(powerpc_cross_prefix)
+	cp u-boot-sam460ex/u-boot.bin ../pc-bios/u-boot-sam460-20100605.bin
+
+skiboot:
+	$(MAKE) -C skiboot CROSS=$(powerpc64_cross_prefix)
+	cp skiboot/skiboot.lid ../pc-bios/skiboot.lid
+
 clean:
 	rm -rf seabios/.config seabios/out seabios/builds
 	$(MAKE) -C vgabios clean
@@ -151,3 +166,5 @@ clean:
 	$(MAKE) -C ipxe/src veryclean
 	$(MAKE) -C SLOF clean
 	rm -rf u-boot/build.e500
+	$(MAKE) -C u-boot-sam460ex distclean
+	$(MAKE) -C skiboot clean

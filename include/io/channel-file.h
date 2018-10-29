@@ -18,8 +18,8 @@
  *
  */
 
-#ifndef QIO_CHANNEL_FILE_H__
-#define QIO_CHANNEL_FILE_H__
+#ifndef QIO_CHANNEL_FILE_H
+#define QIO_CHANNEL_FILE_H
 
 #include "io/channel.h"
 
@@ -71,9 +71,9 @@ qio_channel_file_new_fd(int fd);
 
 /**
  * qio_channel_file_new_path:
- * @fd: the file descriptor
+ * @path: the file path
  * @flags: the open flags (O_RDONLY|O_WRONLY|O_RDWR, etc)
- * @mode: the file creation mode if O_WRONLY is set in @flags
+ * @mode: the file creation mode if O_CREAT is set in @flags
  * @errp: pointer to initialized error object
  *
  * Create a new IO channel object for a file represented
@@ -90,4 +90,4 @@ qio_channel_file_new_path(const char *path,
                           mode_t mode,
                           Error **errp);
 
-#endif /* QIO_CHANNEL_FILE_H__ */
+#endif /* QIO_CHANNEL_FILE_H */
