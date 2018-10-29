@@ -18,8 +18,8 @@
  *
  */
 
-#ifndef QIO_CHANNEL_TLS_H__
-#define QIO_CHANNEL_TLS_H__
+#ifndef QIO_CHANNEL_TLS_H
+#define QIO_CHANNEL_TLS_H
 
 #include "io/channel.h"
 #include "io/task.h"
@@ -55,7 +55,7 @@ struct QIOChannelTLS {
  * @master: the underlying channel object
  * @creds: the credentials to use for TLS handshake
  * @aclname: the access control list for validating clients
- * @errp: pointer to an uninitialized error object
+ * @errp: pointer to a NULL-initialized error object
  *
  * Create a new TLS channel that runs the server side of
  * a TLS session. The TLS session handshake will use the
@@ -85,7 +85,7 @@ qio_channel_tls_new_server(QIOChannel *master,
  * @master: the underlying channel object
  * @creds: the credentials to use for TLS handshake
  * @hostname: the user specified server hostname
- * @errp: pointer to an uninitialized error object
+ * @errp: pointer to a NULL-initialized error object
  *
  * Create a new TLS channel that runs the client side of
  * a TLS session. The TLS session handshake will use the
@@ -116,6 +116,8 @@ qio_channel_tls_new_client(QIOChannel *master,
  * @func: the callback to invoke when completed
  * @opaque: opaque data to pass to @func
  * @destroy: optional callback to free @opaque
+ * @context: the context that TLS handshake will run with. If %NULL,
+ *           the default context will be used
  *
  * Perform the TLS session handshake. This method
  * will return immediately and the handshake will
@@ -126,7 +128,8 @@ qio_channel_tls_new_client(QIOChannel *master,
 void qio_channel_tls_handshake(QIOChannelTLS *ioc,
                                QIOTaskFunc func,
                                gpointer opaque,
-                               GDestroyNotify destroy);
+                               GDestroyNotify destroy,
+                               GMainContext *context);
 
 /**
  * qio_channel_tls_get_session:
@@ -139,4 +142,4 @@ void qio_channel_tls_handshake(QIOChannelTLS *ioc,
 QCryptoTLSSession *
 qio_channel_tls_get_session(QIOChannelTLS *ioc);
 
-#endif /* QIO_CHANNEL_TLS_H__ */
+#endif /* QIO_CHANNEL_TLS_H */

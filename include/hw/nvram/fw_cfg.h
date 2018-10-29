@@ -1,76 +1,77 @@
 #ifndef FW_CFG_H
 #define FW_CFG_H
 
-#ifndef NO_QEMU_PROTOS
-#include <stdint.h>
-#include <stddef.h>
-
 #include "exec/hwaddr.h"
-#include "qemu/typedefs.h"
-#endif
+#include "standard-headers/linux/qemu_fw_cfg.h"
+#include "hw/sysbus.h"
+#include "sysemu/dma.h"
 
-#define FW_CFG_SIGNATURE        0x00
-#define FW_CFG_ID               0x01
-#define FW_CFG_UUID             0x02
-#define FW_CFG_RAM_SIZE         0x03
-#define FW_CFG_NOGRAPHIC        0x04
-#define FW_CFG_NB_CPUS          0x05
-#define FW_CFG_MACHINE_ID       0x06
-#define FW_CFG_KERNEL_ADDR      0x07
-#define FW_CFG_KERNEL_SIZE      0x08
-#define FW_CFG_KERNEL_CMDLINE   0x09
-#define FW_CFG_INITRD_ADDR      0x0a
-#define FW_CFG_INITRD_SIZE      0x0b
-#define FW_CFG_BOOT_DEVICE      0x0c
-#define FW_CFG_NUMA             0x0d
-#define FW_CFG_BOOT_MENU        0x0e
-#define FW_CFG_MAX_CPUS         0x0f
-#define FW_CFG_KERNEL_ENTRY     0x10
-#define FW_CFG_KERNEL_DATA      0x11
-#define FW_CFG_INITRD_DATA      0x12
-#define FW_CFG_CMDLINE_ADDR     0x13
-#define FW_CFG_CMDLINE_SIZE     0x14
-#define FW_CFG_CMDLINE_DATA     0x15
-#define FW_CFG_SETUP_ADDR       0x16
-#define FW_CFG_SETUP_SIZE       0x17
-#define FW_CFG_SETUP_DATA       0x18
-#define FW_CFG_FILE_DIR         0x19
+#define TYPE_FW_CFG     "fw_cfg"
+#define TYPE_FW_CFG_IO  "fw_cfg_io"
+#define TYPE_FW_CFG_MEM "fw_cfg_mem"
 
-#define FW_CFG_FILE_FIRST       0x20
-#define FW_CFG_FILE_SLOTS       0x10
-#define FW_CFG_MAX_ENTRY        (FW_CFG_FILE_FIRST+FW_CFG_FILE_SLOTS)
+#define FW_CFG(obj)     OBJECT_CHECK(FWCfgState,    (obj), TYPE_FW_CFG)
+#define FW_CFG_IO(obj)  OBJECT_CHECK(FWCfgIoState,  (obj), TYPE_FW_CFG_IO)
+#define FW_CFG_MEM(obj) OBJECT_CHECK(FWCfgMemState, (obj), TYPE_FW_CFG_MEM)
 
-#define FW_CFG_WRITE_CHANNEL    0x4000
-#define FW_CFG_ARCH_LOCAL       0x8000
-#define FW_CFG_ENTRY_MASK       ~(FW_CFG_WRITE_CHANNEL | FW_CFG_ARCH_LOCAL)
+typedef struct fw_cfg_file FWCfgFile;
 
-#define FW_CFG_INVALID          0xffff
+#define FW_CFG_ORDER_OVERRIDE_VGA    70
+#define FW_CFG_ORDER_OVERRIDE_NIC    80
+#define FW_CFG_ORDER_OVERRIDE_USER   100
+#define FW_CFG_ORDER_OVERRIDE_DEVICE 110
 
-#define FW_CFG_MAX_FILE_PATH    56
-
-#ifndef NO_QEMU_PROTOS
-typedef struct FWCfgFile {
-    uint32_t  size;        /* file size */
-    uint16_t  select;      /* write this to 0x510 to read it */
-    uint16_t  reserved;
-    char      name[FW_CFG_MAX_FILE_PATH];
-} FWCfgFile;
+void fw_cfg_set_order_override(FWCfgState *fw_cfg, int order);
+void fw_cfg_reset_order_override(FWCfgState *fw_cfg);
 
 typedef struct FWCfgFiles {
     uint32_t  count;
     FWCfgFile f[];
 } FWCfgFiles;
 
-/* Control as first field allows for different structures selected by this
- * field, which might be useful in the future
- */
-typedef struct FWCfgDmaAccess {
-    uint32_t control;
-    uint32_t length;
-    uint64_t address;
-} QEMU_PACKED FWCfgDmaAccess;
+typedef struct fw_cfg_dma_access FWCfgDmaAccess;
 
-typedef void (*FWCfgReadCallback)(void *opaque);
+typedef void (*FWCfgCallback)(void *opaque);
+typedef void (*FWCfgWriteCallback)(void *opaque, off_t start, size_t len);
+
+struct FWCfgState {
+    /*< private >*/
+    SysBusDevice parent_obj;
+    /*< public >*/
+
+    uint16_t file_slots;
+    FWCfgEntry *entries[2];
+    int *entry_order;
+    FWCfgFiles *files;
+    uint16_t cur_entry;
+    uint32_t cur_offset;
+    Notifier machine_ready;
+
+    int fw_cfg_order_override;
+
+    bool dma_enabled;
+    dma_addr_t dma_addr;
+    AddressSpace *dma_as;
+    MemoryRegion dma_iomem;
+};
+
+struct FWCfgIoState {
+    /*< private >*/
+    FWCfgState parent_obj;
+    /*< public >*/
+
+    MemoryRegion comb_iomem;
+};
+
+struct FWCfgMemState {
+    /*< private >*/
+    FWCfgState parent_obj;
+    /*< public >*/
+
+    MemoryRegion ctl_iomem, data_iomem;
+    uint32_t data_width;
+    MemoryRegionOps wide_data_ops;
+};
 
 /**
  * fw_cfg_add_bytes:
@@ -169,10 +170,12 @@ void fw_cfg_add_file(FWCfgState *s, const char *filename, void *data,
  * fw_cfg_add_file_callback:
  * @s: fw_cfg device being modified
  * @filename: name of new fw_cfg file item
- * @callback: callback function
+ * @select_cb: callback function when selecting
+ * @write_cb: callback function after a write
  * @callback_opaque: argument to be passed into callback function
  * @data: pointer to start of item data
  * @len: size of item data
+ * @read_only: is file read only
  *
  * Add a new NAMED fw_cfg item as a raw "blob" of the given size. The data
  * referenced by the starting pointer is only linked, NOT copied, into the
@@ -187,8 +190,10 @@ void fw_cfg_add_file(FWCfgState *s, const char *filename, void *data,
  * with FW_CFG_DMA_CTL_SELECT).
  */
 void fw_cfg_add_file_callback(FWCfgState *s, const char *filename,
-                              FWCfgReadCallback callback, void *callback_opaque,
-                              void *data, size_t len);
+                              FWCfgCallback select_cb,
+                              FWCfgWriteCallback write_cb,
+                              void *callback_opaque,
+                              void *data, size_t len, bool read_only);
 
 /**
  * fw_cfg_modify_file:
@@ -219,7 +224,6 @@ FWCfgState *fw_cfg_init_mem_wide(hwaddr ctl_addr,
                                  hwaddr dma_addr, AddressSpace *dma_as);
 
 FWCfgState *fw_cfg_find(void);
-
-#endif /* NO_QEMU_PROTOS */
+bool fw_cfg_dma_enabled(void *opaque);
 
 #endif

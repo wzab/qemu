@@ -21,16 +21,16 @@
  */
 
 
-#include <stdlib.h>
-#include <fcntl.h>
+#include "qemu/osdep.h"
 
-#include "config-host.h"
 #include "crypto-tls-x509-helpers.h"
 #include "io/channel-tls.h"
 #include "io/channel-socket.h"
 #include "io-channel-helpers.h"
+#include "crypto/init.h"
 #include "crypto/tlscredsx509.h"
 #include "qemu/acl.h"
+#include "qapi/error.h"
 #include "qom/object_interfaces.h"
 
 #ifdef QCRYPTO_HAVE_TLS_TEST_SUPPORT
@@ -54,20 +54,18 @@ struct QIOChannelTLSHandshakeData {
     bool failed;
 };
 
-static void test_tls_handshake_done(Object *source,
-                                    Error *err,
+static void test_tls_handshake_done(QIOTask *task,
                                     gpointer opaque)
 {
     struct QIOChannelTLSHandshakeData *data = opaque;
 
     data->finished = true;
-    data->failed = err != NULL;
+    data->failed = qio_task_propagate_error(task, NULL);
 }
 
 
 static QCryptoTLSCreds *test_tls_creds_create(QCryptoTLSCredsEndpoint endpoint,
-                                              const char *certdir,
-                                              Error **errp)
+                                              const char *certdir)
 {
     Object *parent = object_get_objects_root();
     Object *creds = object_new_with_props(
@@ -75,11 +73,12 @@ static QCryptoTLSCreds *test_tls_creds_create(QCryptoTLSCredsEndpoint endpoint,
         parent,
         (endpoint == QCRYPTO_TLS_CREDS_ENDPOINT_SERVER ?
          "testtlscredsserver" : "testtlscredsclient"),
-        errp,
+        &error_abort,
         "endpoint", (endpoint == QCRYPTO_TLS_CREDS_ENDPOINT_SERVER ?
                      "server" : "client"),
         "dir", certdir,
         "verify-peer", "yes",
+        "priority", "NORMAL",
         /* We skip initial sanity checks here because we
          * want to make sure that problems are being
          * detected at the TLS session validation stage,
@@ -90,9 +89,6 @@ static QCryptoTLSCreds *test_tls_creds_create(QCryptoTLSCredsEndpoint endpoint,
         NULL
         );
 
-    if (*errp) {
-        return NULL;
-    }
     return QCRYPTO_TLS_CREDS(creds);
 }
 
@@ -122,15 +118,14 @@ static void test_io_channel_tls(const void *opaque)
     int channel[2];
     struct QIOChannelTLSHandshakeData clientHandshake = { false, false };
     struct QIOChannelTLSHandshakeData serverHandshake = { false, false };
-    Error *err = NULL;
     QIOChannelTest *test;
     GMainContext *mainloop;
 
     /* We'll use this for our fake client-server connection */
     g_assert(socketpair(AF_UNIX, SOCK_STREAM, 0, channel) == 0);
 
-#define CLIENT_CERT_DIR "tests/test-crypto-tlssession-client/"
-#define SERVER_CERT_DIR "tests/test-crypto-tlssession-server/"
+#define CLIENT_CERT_DIR "tests/test-io-channel-tls-client/"
+#define SERVER_CERT_DIR "tests/test-io-channel-tls-server/"
     mkdir(CLIENT_CERT_DIR, 0700);
     mkdir(SERVER_CERT_DIR, 0700);
 
@@ -158,14 +153,12 @@ static void test_io_channel_tls(const void *opaque)
 
     clientCreds = test_tls_creds_create(
         QCRYPTO_TLS_CREDS_ENDPOINT_CLIENT,
-        CLIENT_CERT_DIR,
-        &err);
+        CLIENT_CERT_DIR);
     g_assert(clientCreds != NULL);
 
     serverCreds = test_tls_creds_create(
         QCRYPTO_TLS_CREDS_ENDPOINT_SERVER,
-        SERVER_CERT_DIR,
-        &err);
+        SERVER_CERT_DIR);
     g_assert(serverCreds != NULL);
 
     acl = qemu_acl_init("channeltlsacl");
@@ -177,10 +170,10 @@ static void test_io_channel_tls(const void *opaque)
     }
 
     clientChanSock = qio_channel_socket_new_fd(
-        channel[0], &err);
+        channel[0], &error_abort);
     g_assert(clientChanSock != NULL);
     serverChanSock = qio_channel_socket_new_fd(
-        channel[1], &err);
+        channel[1], &error_abort);
     g_assert(serverChanSock != NULL);
 
     /*
@@ -194,21 +187,23 @@ static void test_io_channel_tls(const void *opaque)
     /* Now the real part of the test, setup the sessions */
     clientChanTLS = qio_channel_tls_new_client(
         QIO_CHANNEL(clientChanSock), clientCreds,
-        data->hostname, &err);
+        data->hostname, &error_abort);
     g_assert(clientChanTLS != NULL);
 
     serverChanTLS = qio_channel_tls_new_server(
         QIO_CHANNEL(serverChanSock), serverCreds,
-        "channeltlsacl", &err);
+        "channeltlsacl", &error_abort);
     g_assert(serverChanTLS != NULL);
 
     qio_channel_tls_handshake(clientChanTLS,
                               test_tls_handshake_done,
                               &clientHandshake,
+                              NULL,
                               NULL);
     qio_channel_tls_handshake(serverChanTLS,
                               test_tls_handshake_done,
                               &serverHandshake,
+                              NULL,
                               NULL);
 
     /*
@@ -220,7 +215,7 @@ static void test_io_channel_tls(const void *opaque)
     mainloop = g_main_context_default();
     do {
         g_main_context_iteration(mainloop, TRUE);
-    } while (!clientHandshake.finished &&
+    } while (!clientHandshake.finished ||
              !serverHandshake.finished);
 
     g_assert(clientHandshake.failed == data->expectClientFail);
@@ -266,6 +261,8 @@ static void test_io_channel_tls(const void *opaque)
 int main(int argc, char **argv)
 {
     int ret;
+
+    g_assert(qcrypto_init(NULL) == 0);
 
     module_call_init(MODULE_INIT_QOM);
     g_test_init(&argc, &argv, NULL);

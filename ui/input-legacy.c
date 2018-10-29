@@ -22,12 +22,11 @@
  * THE SOFTWARE.
  */
 
+#include "qemu/osdep.h"
+#include "qapi/qapi-commands-ui.h"
 #include "sysemu/sysemu.h"
 #include "ui/console.h"
-#include "qapi/error.h"
-#include "qmp-commands.h"
-#include "qapi-types.h"
-#include "ui/keymaps.h"
+#include "keymaps.h"
 #include "ui/input.h"
 
 struct QEMUPutMouseEntry {
@@ -57,12 +56,13 @@ struct QEMUPutLEDEntry {
 static QTAILQ_HEAD(, QEMUPutLEDEntry) led_handlers =
     QTAILQ_HEAD_INITIALIZER(led_handlers);
 
-int index_from_key(const char *key)
+int index_from_key(const char *key, size_t key_length)
 {
     int i;
 
-    for (i = 0; QKeyCode_lookup[i] != NULL; i++) {
-        if (!strcmp(key, QKeyCode_lookup[i])) {
+    for (i = 0; i < Q_KEY_CODE__MAX; i++) {
+        if (!strncmp(key, QKeyCode_str(i), key_length) &&
+            !QKeyCode_str(i)[key_length]) {
             break;
         }
     }
@@ -75,6 +75,11 @@ static KeyValue *copy_key_value(KeyValue *src)
 {
     KeyValue *dst = g_new(KeyValue, 1);
     memcpy(dst, src, sizeof(*src));
+    if (dst->type == KEY_VALUE_KIND_NUMBER) {
+        QKeyCode code = qemu_input_key_number_to_qcode(dst->u.number.data);
+        dst->type = KEY_VALUE_KIND_QCODE;
+        dst->u.qcode.data = code;
+    }
     return dst;
 }
 
@@ -109,12 +114,13 @@ static void legacy_kbd_event(DeviceState *dev, QemuConsole *src,
 {
     QEMUPutKbdEntry *entry = (QEMUPutKbdEntry *)dev;
     int scancodes[3], i, count;
+    InputKeyEvent *key = evt->u.key.data;
 
     if (!entry || !entry->put_kbd) {
         return;
     }
-    count = qemu_input_key_value_to_scancode(evt->u.key->key,
-                                             evt->u.key->down,
+    count = qemu_input_key_value_to_scancode(key->key,
+                                             key->down,
                                              scancodes);
     for (i = 0; i < count; i++) {
         entry->put_kbd(entry->opaque, scancodes[i]);
@@ -149,23 +155,25 @@ static void legacy_mouse_event(DeviceState *dev, QemuConsole *src,
         [INPUT_BUTTON_RIGHT]  = MOUSE_EVENT_RBUTTON,
     };
     QEMUPutMouseEntry *s = (QEMUPutMouseEntry *)dev;
+    InputBtnEvent *btn;
+    InputMoveEvent *move;
 
     switch (evt->type) {
     case INPUT_EVENT_KIND_BTN:
-        if (evt->u.btn->down) {
-            s->buttons |= bmap[evt->u.btn->button];
+        btn = evt->u.btn.data;
+        if (btn->down) {
+            s->buttons |= bmap[btn->button];
         } else {
-            s->buttons &= ~bmap[evt->u.btn->button];
+            s->buttons &= ~bmap[btn->button];
         }
-        if (evt->u.btn->down && evt->u.btn->button == INPUT_BUTTON_WHEELUP) {
+        if (btn->down && btn->button == INPUT_BUTTON_WHEEL_UP) {
             s->qemu_put_mouse_event(s->qemu_put_mouse_event_opaque,
                                     s->axis[INPUT_AXIS_X],
                                     s->axis[INPUT_AXIS_Y],
                                     -1,
                                     s->buttons);
         }
-        if (evt->u.btn->down &&
-            evt->u.btn->button == INPUT_BUTTON_WHEELDOWN) {
+        if (btn->down && btn->button == INPUT_BUTTON_WHEEL_DOWN) {
             s->qemu_put_mouse_event(s->qemu_put_mouse_event_opaque,
                                     s->axis[INPUT_AXIS_X],
                                     s->axis[INPUT_AXIS_Y],
@@ -174,10 +182,12 @@ static void legacy_mouse_event(DeviceState *dev, QemuConsole *src,
         }
         break;
     case INPUT_EVENT_KIND_ABS:
-        s->axis[evt->u.abs->axis] = evt->u.abs->value;
+        move = evt->u.abs.data;
+        s->axis[move->axis] = move->value;
         break;
     case INPUT_EVENT_KIND_REL:
-        s->axis[evt->u.rel->axis] += evt->u.rel->value;
+        move = evt->u.rel.data;
+        s->axis[move->axis] += move->value;
         break;
     default:
         break;

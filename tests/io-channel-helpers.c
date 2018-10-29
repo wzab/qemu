@@ -18,7 +18,9 @@
  *
  */
 
+#include "qemu/osdep.h"
 #include "io-channel-helpers.h"
+#include "qemu/iov.h"
 
 struct QIOChannelTest {
     QIOChannel *src;
@@ -35,77 +37,17 @@ struct QIOChannelTest {
 };
 
 
-static void test_skip_iovec(struct iovec **iov,
-                            size_t *niov,
-                            size_t skip,
-                            struct iovec *old)
-{
-    size_t offset = 0;
-    size_t i;
-
-    for (i = 0; i < *niov; i++) {
-        if (skip < (*iov)[i].iov_len) {
-            old->iov_len = (*iov)[i].iov_len;
-            old->iov_base = (*iov)[i].iov_base;
-
-            (*iov)[i].iov_len -= skip;
-            (*iov)[i].iov_base += skip;
-            break;
-        } else {
-            skip -= (*iov)[i].iov_len;
-
-            if (i == 0 && old->iov_base) {
-                (*iov)[i].iov_len = old->iov_len;
-                (*iov)[i].iov_base = old->iov_base;
-                old->iov_len = 0;
-                old->iov_base = NULL;
-            }
-
-            offset++;
-        }
-    }
-
-    *iov = *iov + offset;
-    *niov -= offset;
-}
-
-
 /* This thread sends all data using iovecs */
 static gpointer test_io_thread_writer(gpointer opaque)
 {
     QIOChannelTest *data = opaque;
-    struct iovec *iov = data->inputv;
-    size_t niov = data->niov;
-    struct iovec old = { 0 };
 
     qio_channel_set_blocking(data->src, data->blocking, NULL);
 
-    while (niov) {
-        ssize_t ret;
-        ret = qio_channel_writev(data->src,
-                                 iov,
-                                 niov,
-                                 &data->writeerr);
-        if (ret == QIO_CHANNEL_ERR_BLOCK) {
-            if (data->blocking) {
-                error_setg(&data->writeerr,
-                           "Unexpected I/O blocking");
-                break;
-            } else {
-                qio_channel_wait(data->src,
-                                 G_IO_OUT);
-                continue;
-            }
-        } else if (ret < 0) {
-            break;
-        } else if (ret == 0) {
-            error_setg(&data->writeerr,
-                       "Unexpected zero length write");
-            break;
-        }
-
-        test_skip_iovec(&iov, &niov, ret, &old);
-    }
+    qio_channel_writev_all(data->src,
+                           data->inputv,
+                           data->niov,
+                           &data->writeerr);
 
     return NULL;
 }
@@ -115,38 +57,13 @@ static gpointer test_io_thread_writer(gpointer opaque)
 static gpointer test_io_thread_reader(gpointer opaque)
 {
     QIOChannelTest *data = opaque;
-    struct iovec *iov = data->outputv;
-    size_t niov = data->niov;
-    struct iovec old = { 0 };
 
     qio_channel_set_blocking(data->dst, data->blocking, NULL);
 
-    while (niov) {
-        ssize_t ret;
-
-        ret = qio_channel_readv(data->dst,
-                                iov,
-                                niov,
-                                &data->readerr);
-
-        if (ret == QIO_CHANNEL_ERR_BLOCK) {
-            if (data->blocking) {
-                error_setg(&data->writeerr,
-                           "Unexpected I/O blocking");
-                break;
-            } else {
-                qio_channel_wait(data->dst,
-                                 G_IO_IN);
-                continue;
-            }
-        } else if (ret < 0) {
-            break;
-        } else if (ret == 0) {
-            break;
-        }
-
-        test_skip_iovec(&iov, &niov, ret, &old);
-    }
+    qio_channel_readv_all(data->dst,
+                          data->outputv,
+                          data->niov,
+                          &data->readerr);
 
     return NULL;
 }
@@ -232,11 +149,11 @@ void qio_channel_test_run_reader(QIOChannelTest *test,
 
 void qio_channel_test_validate(QIOChannelTest *test)
 {
+    g_assert(test->readerr == NULL);
+    g_assert(test->writeerr == NULL);
     g_assert_cmpint(memcmp(test->input,
                            test->output,
                            test->len), ==, 0);
-    g_assert(test->readerr == NULL);
-    g_assert(test->writeerr == NULL);
 
     g_free(test->inputv);
     g_free(test->outputv);
