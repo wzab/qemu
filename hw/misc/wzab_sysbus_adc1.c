@@ -70,6 +70,9 @@
 #define PCI_DEVICE_ID_WZAB_WZADC1 0x0133
 
 #include <inttypes.h>
+#include "qemu/osdep.h"
+#include <string.h>
+#include "qemu/compiler.h"
 #include "hw/sysbus.h"
 #include "hw/hw.h"
 #include "hw/pci/pci.h"

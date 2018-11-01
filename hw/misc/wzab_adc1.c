@@ -68,8 +68,10 @@
 //PCI IDs below are not registred! Use only for experiments!
 #define PCI_VENDOR_ID_WZAB 0xabba
 #define PCI_DEVICE_ID_WZAB_WZADC1 0x0133
-
+#include "qemu/osdep.h"
 #include <inttypes.h>
+#include "qemu/compiler.h"
+#include <string.h>
 #include "hw/sysbus.h"
 #include "hw/hw.h"
 #include "hw/pci/pci.h"

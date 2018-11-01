@@ -27,6 +27,9 @@
 //Simulated processing time
 #define ENC1_PROCESSING_TIME 5000000
 #include <inttypes.h>
+#include "qemu/osdep.h"
+#include <string.h>
+#include "qemu/compiler.h"
 #include "hw/sysbus.h"
 #include "hw/hw.h"
 #include <mcrypt.h>
