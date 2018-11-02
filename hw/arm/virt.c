@@ -653,6 +653,29 @@ static void create_rtc(const VirtMachineState *vms, qemu_irq *pic)
     g_free(nodename);
 }
 
+static void create_wzenc1(const VirtMachineState *vms, qemu_irq *pic)
+{
+    char *nodename;
+    hwaddr base = vms->memmap[VIRT_WZENC1].base;
+    hwaddr size = vms->memmap[VIRT_WZENC1].size;
+    int irq = vms->irqmap[VIRT_WZENC1];
+    const char compat[] = "wzab_enc1";
+
+    sysbus_create_simple("sysbus-wzenc1", base, pic[irq]);
+
+    nodename = g_strdup_printf("/wzenc1@%" PRIx64, base);
+    qemu_fdt_add_subnode(vms->fdt, nodename);
+    qemu_fdt_setprop(vms->fdt, nodename, "compatible", compat, sizeof(compat));
+    qemu_fdt_setprop_sized_cells(vms->fdt, nodename, "reg",
+                                 2, base, 2, size);
+    qemu_fdt_setprop_cells(vms->fdt, nodename, "interrupts",
+                           GIC_FDT_IRQ_TYPE_SPI, irq,
+                           GIC_FDT_IRQ_FLAGS_LEVEL_HI);
+    qemu_fdt_setprop_cell(vms->fdt, nodename, "clocks", vms->clock_phandle);
+    qemu_fdt_setprop_string(vms->fdt, nodename, "clock-names", "apb_pclk");
+    g_free(nodename);
+}
+
 static DeviceState *gpio_key_dev;
 static void virt_powerdown_req(Notifier *n, void *opaque)
 {
@@ -1386,7 +1409,7 @@ static void machvirt_init(MachineState *machine)
 
     create_gpio(vms, pic);
 
-    sysbus_create_simple("sysbus-wzenc1",vms->memmap[VIRT_WZENC1].base,pic[vms->irqmap[VIRT_WZENC1]]);
+    create_wzenc1(vms, pic);
 
     /* Create mmio transports, so the user can create virtio backends
      * (which will be automatically plugged in to the transports). If
