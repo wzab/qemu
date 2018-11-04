@@ -79,31 +79,34 @@
 #include "qemu/timer.h"
 #include "wzab_adc1.h"
 
-static uint64_t pci_wz_adc1_read(void *opaque, hwaddr addr, unsigned size);
-static void pci_wz_adc1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size);
+static uint64_t wzadc1_read(void *opaque, hwaddr addr, unsigned size);
+static void wzadc1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size);
+int wzadc1_init(SysBusDevice *sbd);
 
 typedef struct WzAdc1State {
   /*<private>*/
-  PCIDevice parent_obj;
+  SysBusDevice parent_obj;
   /*<public>*/
-  MemoryRegion mmio;
+  MemoryRegion iomem;
   uint32_t regs[TST1_REGS_NUM];
   uint32_t writep, readp;
-  uint32_t wz_adc1_mmio_io_addr;
+  uint32_t wzadc1_io_addr;
   uint32_t overrun;
   uint32_t irq_pending;
+  uint32_t irq_mask;
   uint32_t div;
   uint32_t sample_val;
   QEMUTimer * timer;
+  qemu_irq irq;
 } WzAdc1State;
 
-#define TYPE_PCI_WZADC1 "pci-wzadc1"
+#define TYPE_SYSBUS_WZADC1 "sysbus-wzadc1"
  
-#define PCI_WZADC1(obj) \
-OBJECT_CHECK(WzAdc1State, (obj), TYPE_PCI_WZADC1) 
-static const MemoryRegionOps pci_wz_adc1_mmio_ops = {
-    .read = pci_wz_adc1_read,
-    .write = pci_wz_adc1_write,
+#define WZADC1(obj) \
+OBJECT_CHECK(WzAdc1State, (obj), TYPE_SYSBUS_WZADC1) 
+static const MemoryRegionOps wzadc1_iomem_ops = {
+    .read = wzadc1_read,
+    .write = wzadc1_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
     .impl = {
         .min_access_size = 4, //Always 32-bit access!!
@@ -111,17 +114,17 @@ static const MemoryRegionOps pci_wz_adc1_mmio_ops = {
     },
 };
 
-static void wz_adc1_reset (void * opaque)
+static void wzadc1_reset (void * opaque)
 {
   WzAdc1State *s = opaque;
   memset(s->regs,0,sizeof(s->regs));
 #ifdef DEBUG_wzab1
-  printf("wzab_tst1 reset!\n");
+  printf("wzadc1 reset!\n");
 #endif
 }
 
 /* called for read accesses to our register memory area */
-static uint64_t pci_wz_adc1_read(void *opaque, hwaddr addr, unsigned size)
+static uint64_t wzadc1_read(void *opaque, hwaddr addr, unsigned size)
 {
 #ifdef DEBUG_wzab1
   printf("Memory read: address %" PRIu64 "\n", (uint64_t) addr);
@@ -156,7 +159,7 @@ static uint64_t pci_wz_adc1_read(void *opaque, hwaddr addr, unsigned size)
 
 
 /* called for write accesses to our register memory area */
-void pci_wz_adc1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
+void wzadc1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
   WzAdc1State *s = opaque;
 #ifdef DEBUG_wzab1  
@@ -198,10 +201,12 @@ void pci_wz_adc1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
   case TST1_CTRL:
     if((val & 1) == 0) {
       //Switch the IRQ off
-      pci_irq_deassert(&s->parent_obj);
+      s->irq_mask = 1;
+      qemu_irq_lower(s->irq);
     } else {
       //Rise the IRQ if it's pending
-      if(s->irq_pending) pci_irq_assert(&s->parent_obj);
+      s->irq_mask = 0;
+      if(s->irq_pending) qemu_irq_raise(s->irq);
     }	
     break;
   default:
@@ -233,7 +238,7 @@ static void wzab1_tick(void *opaque)
 #ifdef DEBUG_wzab1
 	printf("trying to write in %08x \n",s->regs[TST1_PAGE1+pagenr]+dwordnr*4);
 #endif
-	pci_dma_write(&s->parent_obj, s->regs[TST1_PAGE1+pagenr]+dwordnr*4,(uint8_t *)&(s->sample_val),4);
+	cpu_physical_memory_write(s->regs[TST1_PAGE1+pagenr]+dwordnr*4,(uint8_t *)&(s->sample_val),4);
 	s->writep = new_writep; //Should be done in atomic way, so no locking...
 	//Modify the sample value. Currently we generate the sawtooth waveform with values between 0 and 1110
 	s->sample_val = s->sample_val+1;
@@ -246,86 +251,83 @@ static void wzab1_tick(void *opaque)
 #ifdef DEBUG_wzab1
   printf("Request IRQ!\n");
 #endif
-  pci_irq_assert(&s->parent_obj);
+  if(s->irq_mask==0) qemu_irq_raise(s->irq);
 }
-static const VMStateDescription vmstate_wz_adc1 = {
-  .name = "wz_adc1",
+
+static const VMStateDescription vmstate_wzadc1 = {
+  .name = "wzadc1",
   .version_id = 2,
   .minimum_version_id = 2,
   .minimum_version_id_old = 2,
-  //.post_load = wz_adc1_post_load,
+  //.post_load = wzadc1_post_load,
   .fields      = (VMStateField []) {
-    VMSTATE_PCI_DEVICE(parent_obj, WzAdc1State),
     VMSTATE_TIMER_PTR(timer,WzAdc1State),
     VMSTATE_END_OF_LIST()
   }
 };
 
-static void wz_adc1_on_reset (void *opaque)
+static void wzadc1_on_reset (void *opaque)
 {
   WzAdc1State *s = opaque;
-  wz_adc1_reset (s);
+  wzadc1_reset (s);
 }
 
-static int pci_wz_adc1_init (PCIDevice *dev)
+static int sysbus_wzadc1_init (SysBusDevice *sbd)
 {
-  WzAdc1State *s = PCI_WZADC1(dev);
-  uint8_t *c = s->parent_obj.config;
-
+  DeviceState *dev = DEVICE(sbd);
+  WzAdc1State *s = WZADC1(dev);
   /* TODO: RST# value should be 0. */
-  c[PCI_INTERRUPT_PIN] = 1;
-  memory_region_init_io(&s->mmio,OBJECT(s),&pci_wz_adc1_mmio_ops,s,
-                        "pci-wzadc1-mmio", 0x100); //@@sizeof(s->regs.u32));
-  pci_register_bar (&s->parent_obj, 0,  PCI_BASE_ADDRESS_SPACE_MEMORY,&s->mmio);
-  qemu_register_reset (wz_adc1_on_reset, s);
+  memory_region_init_io(&s->iomem,OBJECT(s),&wzadc1_iomem_ops,s,
+                        "sysbus-wzadc1-iomem", 0x100); //@@sizeof(s->regs.u32));
+  sysbus_init_mmio(sbd, &s->iomem);
+  sysbus_init_irq(sbd,&s->irq);
+  qemu_register_reset (wzadc1_on_reset, s);
   s->timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, wzab1_tick, s);
-  //AUD_register_card ("wz_adc1", &s->card);
-  wz_adc1_reset (s);
+  //AUD_register_card ("wzadc1", &s->card);
+  wzadc1_reset (s);
   return 0;
 }
 
+/*
 static void
-pci_wz_adc1_uninit(PCIDevice *dev)
+sysbus_wzadc1_uninit(SysBusDevice *sbd)
 {
-    WzAdc1State *d = PCI_WZADC1(dev);
-    wz_adc1_reset(d);
+    WzAdc1State *d = WZADC1(sbd);
+    wzadc1_reset(d);
     timer_free(d->timer);
 }
+*/
 
-static void qdev_pci_wz_adc1_reset(DeviceState *dev)
+static void sysbus_wzadc1_reset(DeviceState *dev)
 {
-    WzAdc1State *d = PCI_WZADC1(dev);
-    wz_adc1_reset(d);
+    WzAdc1State *d = WZADC1(dev);
+    wzadc1_reset(d);
 }
 
-static void pci_wzadc1_class_init(ObjectClass *klass, void *data)
+static void sysbus_wzadc1_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
-    PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
 
-    k->init = pci_wz_adc1_init;
-    k->exit = pci_wz_adc1_uninit;
-    k->vendor_id = PCI_VENDOR_ID_WZAB;
-    k->device_id = PCI_DEVICE_ID_WZAB_WZADC1;
-    k->revision = 0x00;
-    k->class_id = PCI_CLASS_OTHERS;
-    dc->desc = "PCI demo BM DMA ADC";
-    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
-    dc->reset = qdev_pci_wz_adc1_reset;
+    k->init = sysbus_wzadc1_init;
+    //k->exit = sysbus_wzadc1_uninit;
+    dc->desc = "SYSBUS demo BM DMA ADC";
+    dc->reset = sysbus_wzadc1_reset;
+    dc->vmsd = &vmstate_wzadc1;
 }
 
-static const TypeInfo pci_wz_adc1_info = {
-    .name          = TYPE_PCI_WZADC1,
-    .parent        = TYPE_PCI_DEVICE,
+static const TypeInfo sysbus_wzadc1_info = {
+    .name          = TYPE_SYSBUS_WZADC1,
+    .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(WzAdc1State),
-    .class_init    = pci_wzadc1_class_init,
+    .class_init    = sysbus_wzadc1_class_init,
 };
 
-static void pci_wzadc1_register_types(void)
+static void sysbus_wzadc1_register_types(void)
 {
-    type_register_static(&pci_wz_adc1_info);
+    type_register_static(&sysbus_wzadc1_info);
 }
 
-type_init(pci_wzadc1_register_types)
+type_init(sysbus_wzadc1_register_types)
 
 
