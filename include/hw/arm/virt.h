@@ -74,6 +74,7 @@ enum {
     VIRT_SECURE_MEM,
     VIRT_WZENC1,
     VIRT_WZADC1,
+    VIRT_WZTIM1,
 };
 
 typedef struct MemMapEntry {
