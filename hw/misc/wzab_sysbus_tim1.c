@@ -56,7 +56,7 @@
  *             (bit 31). Bit 0 allows you to mask the interrupt
  */
 
-#define DEBUG_wzab1 1
+//#define DEBUG_wzab1 1
 //PCI IDs below are not registred! Use only for experiments!
 #define PCI_VENDOR_ID_WZAB 0xabba
 #define PCI_DEVICE_ID_WZAB_WZTIM1 0x0123
