@@ -321,8 +321,9 @@ static void wz_enc1_on_reset (void *opaque)
 }
 */
 
-static int sysbus_wzenc1_init (SysBusDevice *sbd)
+static void sysbus_wzenc1_init (Object * obj)
 {
+  SysBusDevice * sbd = SYS_BUS_DEVICE(obj);
   DeviceState *dev = DEVICE(sbd);
   WzEnc1State *s = WZENC1(dev);
   //Register memory mapped registers
@@ -334,7 +335,7 @@ static int sysbus_wzenc1_init (SysBusDevice *sbd)
   //Register timer used to simulate processing time
   s->timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, wzab1_tick, s);
   wz_enc1_reset (s);
-  return 0;
+  //return 0;
 }
 
 /*
@@ -356,9 +357,8 @@ static void sysbus_wzenc1_reset(DeviceState *dev)
 static void sysbus_wzenc1_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
-    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+    //SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
 
-    k->init = sysbus_wzenc1_init;
     //k->exit = sysbus_wzenc1_uninit;
     dc->desc = "SYSBUS demo AES accelerator";
     dc->reset = sysbus_wzenc1_reset;
@@ -369,6 +369,7 @@ static const TypeInfo sysbus_wzenc1_info = {
     .name          = TYPE_SYSBUS_WZENC1,
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(WzEnc1State),
+    .instance_init = sysbus_wzenc1_init,
     .class_init    = sysbus_wzenc1_class_init,
 };
 
