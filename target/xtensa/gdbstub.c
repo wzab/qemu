@@ -18,7 +18,6 @@
  * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
 #include "qemu/osdep.h"
-#include "qemu-common.h"
 #include "cpu.h"
 #include "exec/gdbstub.h"
 #include "qemu/log.h"
@@ -45,15 +44,20 @@ void xtensa_count_regs(const XtensaConfig *config,
                        unsigned *n_regs, unsigned *n_core_regs)
 {
     unsigned i;
+    bool count_core_regs = true;
 
     for (i = 0; config->gdb_regmap.reg[i].targno >= 0; ++i) {
         if (config->gdb_regmap.reg[i].type != xtRegisterTypeTieState &&
             config->gdb_regmap.reg[i].type != xtRegisterTypeMapped &&
             config->gdb_regmap.reg[i].type != xtRegisterTypeUnmapped) {
             ++*n_regs;
-            if ((config->gdb_regmap.reg[i].flags &
-                 XTENSA_REGISTER_FLAGS_PRIVILEGED) == 0) {
-                ++*n_core_regs;
+            if (count_core_regs) {
+                if ((config->gdb_regmap.reg[i].flags &
+                     XTENSA_REGISTER_FLAGS_PRIVILEGED) == 0) {
+                    ++*n_core_regs;
+                } else {
+                    count_core_regs = false;
+                }
             }
         }
     }

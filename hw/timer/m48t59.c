@@ -22,16 +22,22 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+
 #include "qemu/osdep.h"
-#include "hw/hw.h"
+#include "qemu-common.h"
+#include "hw/irq.h"
+#include "hw/qdev-properties.h"
 #include "hw/timer/m48t59.h"
 #include "qemu/timer.h"
+#include "sysemu/runstate.h"
 #include "sysemu/sysemu.h"
 #include "hw/sysbus.h"
 #include "exec/address-spaces.h"
 #include "qemu/bcd.h"
+#include "qemu/module.h"
 
 #include "m48t59-internal.h"
+#include "migration/vmstate.h"
 
 #define TYPE_M48TXX_SYS_BUS "sysbus-m48txx"
 #define M48TXX_SYS_BUS_GET_CLASS(obj) \

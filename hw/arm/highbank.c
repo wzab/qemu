@@ -18,13 +18,15 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu-common.h"
 #include "qapi/error.h"
 #include "hw/sysbus.h"
-#include "hw/arm/arm.h"
-#include "hw/devices.h"
+#include "migration/vmstate.h"
+#include "hw/arm/boot.h"
 #include "hw/loader.h"
 #include "net/net.h"
 #include "sysemu/kvm.h"
+#include "sysemu/runstate.h"
 #include "sysemu/sysemu.h"
 #include "hw/boards.h"
 #include "exec/address-spaces.h"
@@ -234,13 +236,11 @@ enum cxmachines {
 static void calxeda_init(MachineState *machine, enum cxmachines machine_id)
 {
     ram_addr_t ram_size = machine->ram_size;
-    const char *kernel_filename = machine->kernel_filename;
-    const char *kernel_cmdline = machine->kernel_cmdline;
-    const char *initrd_filename = machine->initrd_filename;
     DeviceState *dev = NULL;
     SysBusDevice *busdev;
     qemu_irq pic[128];
     int n;
+    unsigned int smp_cpus = machine->smp.cpus;
     qemu_irq cpu_irq[4];
     qemu_irq cpu_fiq[4];
     qemu_irq cpu_virq[4];
@@ -387,9 +387,6 @@ static void calxeda_init(MachineState *machine, enum cxmachines machine_id)
     /* TODO create and connect IDE devices for ide_drive_get() */
 
     highbank_binfo.ram_size = ram_size;
-    highbank_binfo.kernel_filename = kernel_filename;
-    highbank_binfo.kernel_cmdline = kernel_cmdline;
-    highbank_binfo.initrd_filename = initrd_filename;
     /* highbank requires a dtb in order to boot, and the dtb will override
      * the board ID. The following value is ignored, so set it to -1 to be
      * clear that the value is meaningless.
@@ -409,7 +406,7 @@ static void calxeda_init(MachineState *machine, enum cxmachines machine_id)
                     "may not boot.");
     }
 
-    arm_load_kernel(ARM_CPU(first_cpu), &highbank_binfo);
+    arm_load_kernel(ARM_CPU(first_cpu), machine, &highbank_binfo);
 }
 
 static void highbank_init(MachineState *machine)

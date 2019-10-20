@@ -5,7 +5,7 @@
 
 #include "exec/memory.h"
 #include "exec/ioport.h"
-#include "hw/qdev.h"
+#include "hw/qdev-core.h"
 
 #define ISA_NUM_IRQS 16
 
@@ -42,10 +42,6 @@ static inline uint16_t applesmc_port(void)
     OBJECT_GET_CLASS(IsaDmaClass, (obj), TYPE_ISADMA)
 #define ISADMA(obj) \
     INTERFACE_CHECK(IsaDma, (obj), TYPE_ISADMA)
-
-struct IsaDma {
-    Object parent;
-};
 
 typedef enum {
     ISADMA_TRANSFER_VERIFY,

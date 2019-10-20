@@ -23,14 +23,20 @@
 #include "cpu.h"
 #include "qemu/cutils.h"
 #include "qemu/bswap.h"
+#include "sysemu/reset.h"
+#include "sysemu/runstate.h"
 #include "sysemu/sysemu.h"
 #include "hw/arm/omap.h"
-#include "hw/arm/arm.h"
+#include "hw/arm/boot.h"
 #include "hw/irq.h"
 #include "ui/console.h"
 #include "hw/boards.h"
 #include "hw/i2c/i2c.h"
-#include "hw/devices.h"
+#include "hw/display/blizzard.h"
+#include "hw/input/tsc2xxx.h"
+#include "hw/misc/cbus.h"
+#include "hw/misc/tmp105.h"
+#include "hw/qdev-properties.h"
 #include "hw/block/flash.h"
 #include "hw/hw.h"
 #include "hw/bt.h"
@@ -218,7 +224,7 @@ static void n8x0_i2c_setup(struct n800_s *s)
     qemu_register_powerdown_notifier(&n8x0_system_powerdown_notifier);
 
     /* Attach a TMP105 PM chip (A0 wired to ground) */
-    dev = i2c_create_slave(i2c, "tmp105", N8X0_TMP105_ADDR);
+    dev = i2c_create_slave(i2c, TYPE_TMP105, N8X0_TMP105_ADDR);
     qdev_connect_gpio_out(dev, 0, tmp_irq);
 }
 
@@ -1355,10 +1361,7 @@ static void n8x0_init(MachineState *machine,
 
     if (machine->kernel_filename) {
         /* Or at the linux loader.  */
-        binfo->kernel_filename = machine->kernel_filename;
-        binfo->kernel_cmdline = machine->kernel_cmdline;
-        binfo->initrd_filename = machine->initrd_filename;
-        arm_load_kernel(s->mpu->cpu, binfo);
+        arm_load_kernel(s->mpu->cpu, machine, binfo);
 
         qemu_register_reset(n8x0_boot_init, s);
     }

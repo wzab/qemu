@@ -14,19 +14,24 @@
 #include "hw/pci/pci.h"
 #include "hw/pci/pci_host.h"
 #include "hw/i386/pc.h"
+#include "hw/irq.h"
+#include "hw/hw.h"
 #include "hw/i386/apic-msidef.h"
 #include "hw/xen/xen_common.h"
-#include "hw/xen/xen_backend.h"
+#include "hw/xen/xen-legacy-backend.h"
+#include "hw/xen/xen-bus.h"
 #include "qapi/error.h"
 #include "qapi/qapi-commands-misc.h"
 #include "qemu/error-report.h"
+#include "qemu/main-loop.h"
 #include "qemu/range.h"
+#include "sysemu/runstate.h"
+#include "sysemu/sysemu.h"
 #include "sysemu/xen-mapcache.h"
 #include "trace.h"
 #include "exec/address-spaces.h"
 
 #include <xen/hvm/ioreq.h>
-#include <xen/hvm/params.h>
 #include <xen/hvm/e820.h>
 
 //#define DEBUG_XEN_HVM
@@ -119,6 +124,8 @@ typedef struct XenIOState {
     DeviceListener device_listener;
     hwaddr free_phys_offset;
     const XenPhysmap *log_for_dirtybit;
+    /* Buffer used by xen_sync_dirty_bitmap */
+    unsigned long *dirty_bitmap;
 
     Notifier exit;
     Notifier suspend;
@@ -464,6 +471,8 @@ static int xen_remove_from_physmap(XenIOState *state,
     QLIST_REMOVE(physmap, list);
     if (state->log_for_dirtybit == physmap) {
         state->log_for_dirtybit = NULL;
+        g_free(state->dirty_bitmap);
+        state->dirty_bitmap = NULL;
     }
     g_free(physmap);
 
@@ -570,7 +579,7 @@ static void xen_io_del(MemoryListener *listener,
 }
 
 static void xen_device_realize(DeviceListener *listener,
-			       DeviceState *dev)
+                               DeviceState *dev)
 {
     XenIOState *state = container_of(listener, XenIOState, device_listener);
 
@@ -588,7 +597,7 @@ static void xen_device_realize(DeviceListener *listener,
 }
 
 static void xen_device_unrealize(DeviceListener *listener,
-				 DeviceState *dev)
+                                 DeviceState *dev)
 {
     XenIOState *state = container_of(listener, XenIOState, device_listener);
 
@@ -614,7 +623,7 @@ static void xen_sync_dirty_bitmap(XenIOState *state,
 {
     hwaddr npages = size >> TARGET_PAGE_BITS;
     const int width = sizeof(unsigned long) * 8;
-    unsigned long bitmap[DIV_ROUND_UP(npages, width)];
+    size_t bitmap_size = DIV_ROUND_UP(npages, width);
     int rc, i, j;
     const XenPhysmap *physmap = NULL;
 
@@ -626,13 +635,14 @@ static void xen_sync_dirty_bitmap(XenIOState *state,
 
     if (state->log_for_dirtybit == NULL) {
         state->log_for_dirtybit = physmap;
+        state->dirty_bitmap = g_new(unsigned long, bitmap_size);
     } else if (state->log_for_dirtybit != physmap) {
         /* Only one range for dirty bitmap can be tracked. */
         return;
     }
 
     rc = xen_track_dirty_vram(xen_domid, start_addr >> TARGET_PAGE_BITS,
-                              npages, bitmap);
+                              npages, state->dirty_bitmap);
     if (rc < 0) {
 #ifndef ENODATA
 #define ENODATA  ENOENT
@@ -646,8 +656,8 @@ static void xen_sync_dirty_bitmap(XenIOState *state,
         return;
     }
 
-    for (i = 0; i < ARRAY_SIZE(bitmap); i++) {
-        unsigned long map = bitmap[i];
+    for (i = 0; i < bitmap_size; i++) {
+        unsigned long map = state->dirty_bitmap[i];
         while (map != 0) {
             j = ctzl(map);
             map &= ~(1ul << j);
@@ -677,6 +687,8 @@ static void xen_log_stop(MemoryListener *listener, MemoryRegionSection *section,
 
     if (old & ~new & (1 << DIRTY_MEMORY_VGA)) {
         state->log_for_dirtybit = NULL;
+        g_free(state->dirty_bitmap);
+        state->dirty_bitmap = NULL;
         /* Disable dirty bit tracking */
         xen_track_dirty_vram(xen_domid, 0, 0, NULL);
     }
@@ -749,6 +761,8 @@ static ioreq_t *cpu_get_ioreq_from_shared_memory(XenIOState *state, int vcpu)
 /* retval--the number of ioreq packet */
 static ioreq_t *cpu_get_ioreq(XenIOState *state)
 {
+    MachineState *ms = MACHINE(qdev_get_machine());
+    unsigned int max_cpus = ms->smp.max_cpus;
     int i;
     evtchn_port_t port;
 
@@ -1233,6 +1247,8 @@ static void xen_exit_notifier(Notifier *n, void *data)
 {
     XenIOState *state = container_of(n, XenIOState, exit);
 
+    xen_destroy_ioreq_server(xen_domid, state->ioservid);
+
     xenevtchn_close(state->xce_handle);
     xs_daemon_close(state->xenstore);
 }
@@ -1376,6 +1392,8 @@ static int xen_map_ioreq_server(XenIOState *state)
 
 void xen_hvm_init(PCMachineState *pcms, MemoryRegion **ram_memory)
 {
+    MachineState *ms = MACHINE(pcms);
+    unsigned int max_cpus = ms->smp.max_cpus;
     int i, rc;
     xen_pfn_t ioreq_pfn;
     XenIOState *state;
@@ -1404,6 +1422,11 @@ void xen_hvm_init(PCMachineState *pcms, MemoryRegion **ram_memory)
 
     state->wakeup.notify = xen_wakeup_notifier;
     qemu_register_wakeup_notifier(&state->wakeup);
+
+    /*
+     * Register wake-up support in QMP query-current-machine API
+     */
+    qemu_register_wakeup_support();
 
     rc = xen_map_ioreq_server(state);
     if (rc < 0) {
@@ -1478,6 +1501,8 @@ void xen_hvm_init(PCMachineState *pcms, MemoryRegion **ram_memory)
     state->device_listener = xen_device_listener;
     QLIST_INIT(&state->dev_list);
     device_listener_register(&state->device_listener);
+
+    xen_bus_init();
 
     /* Initialize backend core & drivers */
     if (xen_be_init() != 0) {

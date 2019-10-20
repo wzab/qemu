@@ -9,6 +9,7 @@
 
 #include "qemu/osdep.h"
 #include "qemu/main-loop.h"
+#include "qemu/module.h"
 #include "qapi/error.h"
 #include "exec/address-spaces.h"
 #include "sysemu/kvm.h"
@@ -136,7 +137,11 @@ void hyperv_synic_add(CPUState *cs)
 
 void hyperv_synic_reset(CPUState *cs)
 {
-    device_reset(DEVICE(get_synic(cs)));
+    SynICState *synic = get_synic(cs);
+
+    if (synic) {
+        device_reset(DEVICE(synic));
+    }
 }
 
 static const TypeInfo synic_type_info = {

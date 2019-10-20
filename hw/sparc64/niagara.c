@@ -24,9 +24,7 @@
 
 #include "qemu/osdep.h"
 #include "qemu/units.h"
-#include "qemu-common.h"
 #include "cpu.h"
-#include "hw/hw.h"
 #include "hw/boards.h"
 #include "hw/char/serial.h"
 #include "hw/misc/unimp.h"
@@ -37,7 +35,7 @@
 #include "sysemu/block-backend.h"
 #include "qemu/error-report.h"
 #include "sysemu/qtest.h"
-
+#include "sysemu/sysemu.h"
 
 typedef struct NiagaraBoardState {
     MemoryRegion hv_ram;

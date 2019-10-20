@@ -26,17 +26,18 @@
    this API directly.  */
 
 #include "qemu/osdep.h"
-#include "hw/qdev.h"
-#include "sysemu/sysemu.h"
 #include "qapi/error.h"
-#include "qapi/qapi-events-misc.h"
+#include "qapi/qapi-events-qdev.h"
 #include "qapi/qmp/qerror.h"
 #include "qapi/visitor.h"
 #include "qemu/error-report.h"
 #include "qemu/option.h"
 #include "hw/hotplug.h"
+#include "hw/irq.h"
+#include "hw/qdev-properties.h"
 #include "hw/boards.h"
 #include "hw/sysbus.h"
+#include "migration/vmstate.h"
 
 bool qdev_hotplug = false;
 static bool qdev_hot_added = false;
@@ -59,6 +60,8 @@ static void bus_remove_child(BusState *bus, DeviceState *child)
             snprintf(name, sizeof(name), "child[%d]", kid->index);
             QTAILQ_REMOVE(&bus->children, kid, sibling);
 
+            bus->num_children--;
+
             /* This gives back ownership of kid->child back to us.  */
             object_property_del(OBJECT(bus), name, NULL);
             object_unref(OBJECT(kid->child));
@@ -73,6 +76,7 @@ static void bus_add_child(BusState *bus, DeviceState *child)
     char name[32];
     BusChild *kid = g_malloc0(sizeof(*kid));
 
+    bus->num_children++;
     kid->index = bus->max_index++;
     kid->child = child;
     object_ref(OBJECT(kid->child));
@@ -158,7 +162,7 @@ DeviceState *qdev_try_create(BusState *bus, const char *type)
     return dev;
 }
 
-static QTAILQ_HEAD(device_listeners, DeviceListener) device_listeners
+static QTAILQ_HEAD(, DeviceListener) device_listeners
     = QTAILQ_HEAD_INITIALIZER(device_listeners);
 
 enum ListenerDirection { Forward, Reverse };
@@ -177,7 +181,7 @@ enum ListenerDirection { Forward, Reverse };
             break;                                                \
         case Reverse:                                             \
             QTAILQ_FOREACH_REVERSE(_listener, &device_listeners,  \
-                                   device_listeners, link) {      \
+                                   link) {                        \
                 if (_listener->_callback) {                       \
                     _listener->_callback(_listener, ##_args);     \
                 }                                                 \
@@ -233,14 +237,37 @@ HotplugHandler *qdev_get_machine_hotplug_handler(DeviceState *dev)
     return NULL;
 }
 
+bool qdev_hotplug_allowed(DeviceState *dev, Error **errp)
+{
+    MachineState *machine;
+    MachineClass *mc;
+    Object *m_obj = qdev_get_machine();
+
+    if (object_dynamic_cast(m_obj, TYPE_MACHINE)) {
+        machine = MACHINE(m_obj);
+        mc = MACHINE_GET_CLASS(machine);
+        if (mc->hotplug_allowed) {
+            return mc->hotplug_allowed(machine, dev, errp);
+        }
+    }
+
+    return true;
+}
+
+HotplugHandler *qdev_get_bus_hotplug_handler(DeviceState *dev)
+{
+    if (dev->parent_bus) {
+        return dev->parent_bus->hotplug_handler;
+    }
+    return NULL;
+}
+
 HotplugHandler *qdev_get_hotplug_handler(DeviceState *dev)
 {
-    HotplugHandler *hotplug_ctrl;
+    HotplugHandler *hotplug_ctrl = qdev_get_machine_hotplug_handler(dev);
 
-    if (dev->parent_bus && dev->parent_bus->hotplug_handler) {
-        hotplug_ctrl = dev->parent_bus->hotplug_handler;
-    } else {
-        hotplug_ctrl = qdev_get_machine_hotplug_handler(dev);
+    if (hotplug_ctrl == NULL && dev->parent_bus) {
+        hotplug_ctrl = qdev_get_bus_hotplug_handler(dev);
     }
     return hotplug_ctrl;
 }
@@ -286,8 +313,7 @@ void qbus_reset_all_fn(void *opaque)
 void qdev_simple_device_unplug_cb(HotplugHandler *hotplug_dev,
                                   DeviceState *dev, Error **errp)
 {
-    /* just zap it */
-    object_unparent(OBJECT(dev));
+    object_property_set_bool(OBJECT(dev), false, "realized", NULL);
 }
 
 /*
@@ -972,6 +998,11 @@ static void device_initfn(Object *obj)
 
 static void device_post_init(Object *obj)
 {
+    /*
+     * Note: ordered so that the user's global properties take
+     * precedence.
+     */
+    object_apply_compat_props(obj);
     qdev_prop_set_globals(DEVICE(obj));
 }
 

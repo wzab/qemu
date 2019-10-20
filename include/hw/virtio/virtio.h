@@ -14,10 +14,10 @@
 #ifndef QEMU_VIRTIO_H
 #define QEMU_VIRTIO_H
 
-#include "hw/hw.h"
+#include "exec/memory.h"
+#include "hw/qdev-core.h"
 #include "net/net.h"
-#include "hw/qdev.h"
-#include "sysemu/sysemu.h"
+#include "migration/vmstate.h"
 #include "qemu/event_notifier.h"
 #include "standard-headers/linux/virtio_config.h"
 #include "standard-headers/linux/virtio_ring.h"
@@ -36,6 +36,21 @@ static inline hwaddr vring_align(hwaddr addr,
 {
     return QEMU_ALIGN_UP(addr, align);
 }
+
+/*
+ * Calculate the number of bytes up to and including the given 'field' of
+ * 'container'.
+ */
+#define virtio_endof(container, field) \
+    (offsetof(container, field) + sizeof_field(container, field))
+
+typedef struct VirtIOFeature {
+    uint64_t flags;
+    size_t end;
+} VirtIOFeature;
+
+size_t virtio_feature_get_config_size(VirtIOFeature *features,
+                                      uint64_t host_features);
 
 typedef struct VirtQueue VirtQueue;
 
@@ -90,6 +105,9 @@ struct VirtIODevice
     uint16_t device_id;
     bool vm_running;
     bool broken; /* device in invalid state, needs reset */
+    bool use_started;
+    bool started;
+    bool start_on_kick; /* when virtio 1.0 feature has not been negotiated */
     VMChangeStateEntry *vmstate;
     char *bus_name;
     uint8_t device_endian;
@@ -267,6 +285,7 @@ typedef struct VirtIORNGConf VirtIORNGConf;
                       VIRTIO_F_IOMMU_PLATFORM, false)
 
 hwaddr virtio_queue_get_desc_addr(VirtIODevice *vdev, int n);
+bool virtio_queue_enabled(VirtIODevice *vdev, int n);
 hwaddr virtio_queue_get_avail_addr(VirtIODevice *vdev, int n);
 hwaddr virtio_queue_get_used_addr(VirtIODevice *vdev, int n);
 hwaddr virtio_queue_get_desc_size(VirtIODevice *vdev, int n);
@@ -332,5 +351,25 @@ static inline bool virtio_is_big_endian(VirtIODevice *vdev)
     }
     /* Devices conforming to VIRTIO 1.0 or later are always LE. */
     return false;
+}
+
+static inline bool virtio_device_started(VirtIODevice *vdev, uint8_t status)
+{
+    if (vdev->use_started) {
+        return vdev->started;
+    }
+
+    return status & VIRTIO_CONFIG_S_DRIVER_OK;
+}
+
+static inline void virtio_set_started(VirtIODevice *vdev, bool started)
+{
+    if (started) {
+        vdev->start_on_kick = false;
+    }
+
+    if (vdev->use_started) {
+        vdev->started = started;
+    }
 }
 #endif

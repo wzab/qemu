@@ -5,7 +5,6 @@
  * See the COPYING file in the top-level directory.
  */
 #include "qemu/osdep.h"
-#include "qemu-common.h"
 #include "qemu/bswap.h"
 #include "hw/display/edid.h"
 
@@ -165,7 +164,7 @@ static void edid_desc_text(uint8_t *desc, uint8_t type,
     if (len > 12) {
         len = 12;
     }
-    strncpy((char *)(desc + 5), text, len);
+    memcpy(desc + 5, text, len);
     desc[5 + len] = '\n';
 }
 

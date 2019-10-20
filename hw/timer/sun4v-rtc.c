@@ -10,8 +10,8 @@
  */
 
 #include "qemu/osdep.h"
-#include "hw/hw.h"
 #include "hw/sysbus.h"
+#include "qemu/module.h"
 #include "qemu/timer.h"
 #include "hw/timer/sun4v-rtc.h"
 #include "trace.h"
@@ -41,7 +41,7 @@ static uint64_t sun4v_rtc_read(void *opaque, hwaddr addr,
 static void sun4v_rtc_write(void *opaque, hwaddr addr,
                              uint64_t val, unsigned size)
 {
-    trace_sun4v_rtc_read(addr, val);
+    trace_sun4v_rtc_write(addr, val);
 }
 
 static const MemoryRegionOps sun4v_rtc_ops = {

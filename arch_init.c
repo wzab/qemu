@@ -22,7 +22,6 @@
  * THE SOFTWARE.
  */
 #include "qemu/osdep.h"
-#include "qemu-common.h"
 #include "cpu.h"
 #include "sysemu/sysemu.h"
 #include "sysemu/arch_init.h"
@@ -106,15 +105,4 @@ int xen_available(void)
 #else
     return 0;
 #endif
-}
-
-
-TargetInfo *qmp_query_target(Error **errp)
-{
-    TargetInfo *info = g_malloc0(sizeof(*info));
-
-    info->arch = qapi_enum_parse(&SysEmuTarget_lookup, TARGET_NAME, -1,
-                                 &error_abort);
-
-    return info;
 }

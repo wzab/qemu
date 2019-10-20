@@ -1,8 +1,5 @@
 #include "qemu/osdep.h"
-#include "qemu-common.h"
 #include "cpu.h"
-#include "hw/hw.h"
-#include "hw/boards.h"
 #include "qemu/error-report.h"
 #include "sysemu/kvm.h"
 #include "kvm_arm.h"
@@ -18,7 +15,7 @@ static bool vfp_needed(void *opaque)
 }
 
 static int get_fpscr(QEMUFile *f, void *opaque, size_t size,
-                     VMStateField *field)
+                     const VMStateField *field)
 {
     ARMCPU *cpu = opaque;
     CPUARMState *env = &cpu->env;
@@ -29,7 +26,7 @@ static int get_fpscr(QEMUFile *f, void *opaque, size_t size,
 }
 
 static int put_fpscr(QEMUFile *f, void *opaque, size_t size,
-                     VMStateField *field, QJSON *vmdesc)
+                     const VMStateField *field, QJSON *vmdesc)
 {
     ARMCPU *cpu = opaque;
     CPUARMState *env = &cpu->env;
@@ -192,6 +189,22 @@ static const VMStateDescription vmstate_serror = {
     }
 };
 
+static bool irq_line_state_needed(void *opaque)
+{
+    return true;
+}
+
+static const VMStateDescription vmstate_irq_line_state = {
+    .name = "cpu/irq-line-state",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .needed = irq_line_state_needed,
+    .fields = (VMStateField[]) {
+        VMSTATE_UINT32(env.irq_line_state, ARMCPU),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
 static bool m_needed(void *opaque)
 {
     ARMCPU *cpu = opaque;
@@ -289,6 +302,21 @@ static const VMStateDescription vmstate_m_v8m = {
     }
 };
 
+static const VMStateDescription vmstate_m_fp = {
+    .name = "cpu/m/fp",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .needed = vfp_needed,
+    .fields = (VMStateField[]) {
+        VMSTATE_UINT32_ARRAY(env.v7m.fpcar, ARMCPU, M_REG_NUM_BANKS),
+        VMSTATE_UINT32_ARRAY(env.v7m.fpccr, ARMCPU, M_REG_NUM_BANKS),
+        VMSTATE_UINT32_ARRAY(env.v7m.fpdscr, ARMCPU, M_REG_NUM_BANKS),
+        VMSTATE_UINT32_ARRAY(env.v7m.cpacr, ARMCPU, M_REG_NUM_BANKS),
+        VMSTATE_UINT32(env.v7m.nsacr, ARMCPU),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
 static const VMStateDescription vmstate_m = {
     .name = "cpu/m",
     .version_id = 4,
@@ -314,6 +342,7 @@ static const VMStateDescription vmstate_m = {
         &vmstate_m_scr,
         &vmstate_m_other_sp,
         &vmstate_m_v8m,
+        &vmstate_m_fp,
         NULL
     }
 };
@@ -487,7 +516,7 @@ static const VMStateDescription vmstate_m_security = {
 };
 
 static int get_cpsr(QEMUFile *f, void *opaque, size_t size,
-                    VMStateField *field)
+                    const VMStateField *field)
 {
     ARMCPU *cpu = opaque;
     CPUARMState *env = &cpu->env;
@@ -543,7 +572,7 @@ static int get_cpsr(QEMUFile *f, void *opaque, size_t size,
 }
 
 static int put_cpsr(QEMUFile *f, void *opaque, size_t size,
-                    VMStateField *field, QJSON *vmdesc)
+                    const VMStateField *field, QJSON *vmdesc)
 {
     ARMCPU *cpu = opaque;
     CPUARMState *env = &cpu->env;
@@ -569,7 +598,7 @@ static const VMStateInfo vmstate_cpsr = {
 };
 
 static int get_power(QEMUFile *f, void *opaque, size_t size,
-                    VMStateField *field)
+                    const VMStateField *field)
 {
     ARMCPU *cpu = opaque;
     bool powered_off = qemu_get_byte(f);
@@ -578,7 +607,7 @@ static int get_power(QEMUFile *f, void *opaque, size_t size,
 }
 
 static int put_power(QEMUFile *f, void *opaque, size_t size,
-                    VMStateField *field, QJSON *vmdesc)
+                    const VMStateField *field, QJSON *vmdesc)
 {
     ARMCPU *cpu = opaque;
 
@@ -604,13 +633,17 @@ static int cpu_pre_save(void *opaque)
 {
     ARMCPU *cpu = opaque;
 
+    if (!kvm_enabled()) {
+        pmu_op_start(&cpu->env);
+    }
+
     if (kvm_enabled()) {
         if (!write_kvmstate_to_list(cpu)) {
             /* This should never fail */
             abort();
         }
     } else {
-        if (!write_cpustate_to_list(cpu)) {
+        if (!write_cpustate_to_list(cpu, false)) {
             /* This should never fail. */
             abort();
         }
@@ -625,10 +658,58 @@ static int cpu_pre_save(void *opaque)
     return 0;
 }
 
+static int cpu_post_save(void *opaque)
+{
+    ARMCPU *cpu = opaque;
+
+    if (!kvm_enabled()) {
+        pmu_op_finish(&cpu->env);
+    }
+
+    return 0;
+}
+
+static int cpu_pre_load(void *opaque)
+{
+    ARMCPU *cpu = opaque;
+    CPUARMState *env = &cpu->env;
+
+    /*
+     * Pre-initialize irq_line_state to a value that's never valid as
+     * real data, so cpu_post_load() can tell whether we've seen the
+     * irq-line-state subsection in the incoming migration state.
+     */
+    env->irq_line_state = UINT32_MAX;
+
+    if (!kvm_enabled()) {
+        pmu_op_start(&cpu->env);
+    }
+
+    return 0;
+}
+
 static int cpu_post_load(void *opaque, int version_id)
 {
     ARMCPU *cpu = opaque;
+    CPUARMState *env = &cpu->env;
     int i, v;
+
+    /*
+     * Handle migration compatibility from old QEMU which didn't
+     * send the irq-line-state subsection. A QEMU without it did not
+     * implement the HCR_EL2.{VI,VF} bits as generating interrupts,
+     * so for TCG the line state matches the bits set in cs->interrupt_request.
+     * For KVM the line state is not stored in cs->interrupt_request
+     * and so this will leave irq_line_state as 0, but this is OK because
+     * we only need to care about it for TCG.
+     */
+    if (env->irq_line_state == UINT32_MAX) {
+        CPUState *cs = CPU(cpu);
+
+        env->irq_line_state = cs->interrupt_request &
+            (CPU_INTERRUPT_HARD | CPU_INTERRUPT_FIQ |
+             CPU_INTERRUPT_VIRQ | CPU_INTERRUPT_VFIQ);
+    }
 
     /* Update the values list from the incoming migration data.
      * Anything in the incoming data which we don't know about is
@@ -672,6 +753,10 @@ static int cpu_post_load(void *opaque, int version_id)
     hw_breakpoint_update_all(cpu);
     hw_watchpoint_update_all(cpu);
 
+    if (!kvm_enabled()) {
+        pmu_op_finish(&cpu->env);
+    }
+
     return 0;
 }
 
@@ -680,6 +765,8 @@ const VMStateDescription vmstate_arm_cpu = {
     .version_id = 22,
     .minimum_version_id = 22,
     .pre_save = cpu_pre_save,
+    .post_save = cpu_post_save,
+    .pre_load = cpu_pre_load,
     .post_load = cpu_post_load,
     .fields = (VMStateField[]) {
         VMSTATE_UINT32_ARRAY(env.regs, ARMCPU, 16),
@@ -747,6 +834,7 @@ const VMStateDescription vmstate_arm_cpu = {
         &vmstate_sve,
 #endif
         &vmstate_serror,
+        &vmstate_irq_line_state,
         NULL
     }
 };

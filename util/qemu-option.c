@@ -26,7 +26,6 @@
 #include "qemu/osdep.h"
 
 #include "qapi/error.h"
-#include "qemu-common.h"
 #include "qemu/error-report.h"
 #include "qapi/qmp/qbool.h"
 #include "qapi/qmp/qdict.h"
@@ -224,7 +223,14 @@ static const char *opt_type_to_string(enum QemuOptType type)
     g_assert_not_reached();
 }
 
-void qemu_opts_print_help(QemuOptsList *list)
+/**
+ * Print the list of options available in the given list.  If
+ * @print_caption is true, a caption (including the list name, if it
+ * exists) is printed.  The options itself will be indented, so
+ * @print_caption should only be set to false if the caller prints its
+ * own custom caption (so that the indentation makes sense).
+ */
+void qemu_opts_print_help(QemuOptsList *list, bool print_caption)
 {
     QemuOptDesc *desc;
     int i;
@@ -234,12 +240,12 @@ void qemu_opts_print_help(QemuOptsList *list)
     desc = list->desc;
     while (desc && desc->name) {
         GString *str = g_string_new(NULL);
-        if (list->name) {
-            g_string_append_printf(str, "%s.", list->name);
-        }
-        g_string_append_printf(str, "%s=%s", desc->name,
+        g_string_append_printf(str, "  %s=<%s>", desc->name,
                                opt_type_to_string(desc->type));
         if (desc->help) {
+            if (str->len < 24) {
+                g_string_append_printf(str, "%*s", 24 - (int)str->len, "");
+            }
             g_string_append_printf(str, " - %s", desc->help);
         }
         g_ptr_array_add(array, g_string_free(str, false));
@@ -247,6 +253,19 @@ void qemu_opts_print_help(QemuOptsList *list)
     }
 
     g_ptr_array_sort(array, (GCompareFunc)qemu_pstrcmp0);
+    if (print_caption && array->len > 0) {
+        if (list->name) {
+            printf("%s options:\n", list->name);
+        } else {
+            printf("Options:\n");
+        }
+    } else if (array->len == 0) {
+        if (list->name) {
+            printf("There are no options for %s.\n", list->name);
+        } else {
+            printf("No options available.\n");
+        }
+    }
     for (i = 0; i < array->len; i++) {
         printf("%s\n", (char *)array->pdata[i]);
     }
@@ -260,7 +279,7 @@ QemuOpt *qemu_opt_find(QemuOpts *opts, const char *name)
 {
     QemuOpt *opt;
 
-    QTAILQ_FOREACH_REVERSE(opt, &opts->head, QemuOptHead, next) {
+    QTAILQ_FOREACH_REVERSE(opt, &opts->head, next) {
         if (strcmp(opt->name, name) != 0)
             continue;
         return opt;
@@ -359,7 +378,7 @@ bool qemu_opt_has_help_opt(QemuOpts *opts)
 {
     QemuOpt *opt;
 
-    QTAILQ_FOREACH_REVERSE(opt, &opts->head, QemuOptHead, next) {
+    QTAILQ_FOREACH_REVERSE(opt, &opts->head, next) {
         if (is_help_option(opt->name)) {
             return true;
         }
@@ -930,7 +949,7 @@ QemuOpts *qemu_opts_parse_noisily(QemuOptsList *list, const char *params,
     opts = opts_parse(list, params, permit_abbrev, false, &invalidp, &err);
     if (err) {
         if (invalidp && has_help_option(params)) {
-            qemu_opts_print_help(list);
+            qemu_opts_print_help(list, true);
             error_free(err);
         } else {
             error_report_err(err);

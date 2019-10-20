@@ -23,17 +23,25 @@
  * THE SOFTWARE.
  */
 /*
- * Reference: Finn Thogersons' VGADOC4b
- *   available at http://home.worldonline.dk/~finth/
+ * Reference: Finn Thogersons' VGADOC4b:
+ *
+ *  http://web.archive.org/web/20021019054927/http://home.worldonline.dk/finth/
+ *
+ * VGADOC4b.ZIP content available at:
+ *
+ *  https://pdos.csail.mit.edu/6.828/2005/readings/hardware/vgadoc
  */
+
 #include "qemu/osdep.h"
+#include "qemu/module.h"
 #include "qemu/units.h"
+#include "sysemu/reset.h"
 #include "qapi/error.h"
 #include "trace.h"
-#include "hw/hw.h"
 #include "hw/pci/pci.h"
+#include "hw/qdev-properties.h"
+#include "migration/vmstate.h"
 #include "ui/pixel_ops.h"
-#include "hw/loader.h"
 #include "cirrus_vga_internal.h"
 
 /*
@@ -2746,11 +2754,12 @@ static int cirrus_post_load(void *opaque, int version_id)
     s->vga.gr[0x00] = s->cirrus_shadow_gr0 & 0x0f;
     s->vga.gr[0x01] = s->cirrus_shadow_gr1 & 0x0f;
 
+    cirrus_update_bank_ptr(s, 0);
+    cirrus_update_bank_ptr(s, 1);
     cirrus_update_memory_access(s);
     /* force refresh */
     s->vga.graphic_mode = -1;
-    cirrus_update_bank_ptr(s, 0);
-    cirrus_update_bank_ptr(s, 1);
+
     return 0;
 }
 

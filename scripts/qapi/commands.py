@@ -30,7 +30,7 @@ def gen_call(name, arg_type, boxed, ret_type):
 
     argstr = ''
     if boxed:
-        assert arg_type and not arg_type.is_empty()
+        assert arg_type
         argstr = '&arg, '
     elif arg_type:
         assert not arg_type.variants
@@ -96,7 +96,7 @@ def gen_marshal_decl(name):
 
 
 def gen_marshal(name, arg_type, boxed, ret_type):
-    have_args = arg_type and not arg_type.is_empty()
+    have_args = boxed or (arg_type and not arg_type.is_empty())
 
     ret = mcgen('''
 
@@ -239,18 +239,16 @@ class QAPISchemaGenCommandVisitor(QAPISchemaModularCVisitor):
         QAPISchemaModularCVisitor.__init__(
             self, prefix, 'qapi-commands',
             ' * Schema-defined QAPI/QMP commands', __doc__)
-        self._regy = QAPIGenCCode()
+        self._regy = QAPIGenCCode(None)
         self._visited_ret_types = {}
 
-    def _begin_module(self, name):
+    def _begin_user_module(self, name):
         self._visited_ret_types[self._genc] = set()
         commands = self._module_basename('qapi-commands', name)
         types = self._module_basename('qapi-types', name)
         visit = self._module_basename('qapi-visit', name)
         self._genc.add(mcgen('''
 #include "qemu/osdep.h"
-#include "qemu-common.h"
-#include "qemu/module.h"
 #include "qapi/visitor.h"
 #include "qapi/qmp/qdict.h"
 #include "qapi/qobject-output-visitor.h"

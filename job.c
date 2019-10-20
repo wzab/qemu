@@ -24,7 +24,6 @@
  */
 
 #include "qemu/osdep.h"
-#include "qemu-common.h"
 #include "qapi/error.h"
 #include "qemu/job.h"
 #include "qemu/id.h"
@@ -159,7 +158,7 @@ bool job_is_internal(Job *job)
 static void job_state_transition(Job *job, JobStatus s1)
 {
     JobStatus s0 = job->status;
-    assert(s1 >= 0 && s1 <= JOB_STATUS__MAX);
+    assert(s1 >= 0 && s1 < JOB_STATUS__MAX);
     trace_job_state_transition(job, job->ret,
                                JobSTT[s0][s1] ? "allowed" : "disallowed",
                                JobStatus_str(s0), JobStatus_str(s1));
@@ -174,7 +173,7 @@ static void job_state_transition(Job *job, JobStatus s1)
 int job_apply_verb(Job *job, JobVerb verb, Error **errp)
 {
     JobStatus s0 = job->status;
-    assert(verb >= 0 && verb <= JOB_VERB__MAX);
+    assert(verb >= 0 && verb < JOB_VERB__MAX);
     trace_job_apply_verb(job, JobStatus_str(s0), JobVerb_str(verb),
                          JobVerbTable[verb][s0] ? "allowed" : "prohibited");
     if (JobVerbTable[verb][s0]) {
@@ -432,7 +431,7 @@ void job_enter_cond(Job *job, bool(*fn)(Job *job))
     timer_del(&job->sleep_timer);
     job->busy = true;
     job_unlock();
-    aio_co_wake(job->co);
+    aio_co_enter(job->aio_context, job->co);
 }
 
 void job_enter(Job *job)
@@ -522,16 +521,6 @@ void coroutine_fn job_sleep_ns(Job *job, int64_t ns)
     }
 
     job_pause_point(job);
-}
-
-void job_drain(Job *job)
-{
-    /* If job is !busy this kicks it into the next pause point. */
-    job_enter(job);
-
-    if (job->driver->drain) {
-        job->driver->drain(job);
-    }
 }
 
 /* Assumes the block_job_mutex is held */
@@ -992,7 +981,7 @@ int job_finish_sync(Job *job, void (*finish)(Job *, Error **errp), Error **errp)
     }
 
     AIO_WAIT_WHILE(job->aio_context,
-                   (job_drain(job), !job_is_completed(job)));
+                   (job_enter(job), !job_is_completed(job)));
 
     ret = (job_is_cancelled(job) && job->ret == 0) ? -ECANCELED : job->ret;
     job_unref(job);

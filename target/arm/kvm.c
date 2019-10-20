@@ -16,17 +16,19 @@
 #include "qemu-common.h"
 #include "qemu/timer.h"
 #include "qemu/error-report.h"
+#include "qemu/main-loop.h"
 #include "sysemu/sysemu.h"
 #include "sysemu/kvm.h"
+#include "sysemu/kvm_int.h"
 #include "kvm_arm.h"
 #include "cpu.h"
 #include "trace.h"
 #include "internals.h"
-#include "hw/arm/arm.h"
 #include "hw/pci/pci.h"
 #include "exec/memattrs.h"
 #include "exec/address-spaces.h"
 #include "hw/boards.h"
+#include "hw/irq.h"
 #include "qemu/log.h"
 
 const KVMCapabilityInfo kvm_arch_required_capabilities[] = {
@@ -158,11 +160,29 @@ void kvm_arm_set_cpu_features_from_host(ARMCPU *cpu)
 
     cpu->kvm_target = arm_host_cpu_features.target;
     cpu->dtb_compatible = arm_host_cpu_features.dtb_compatible;
+    cpu->isar = arm_host_cpu_features.isar;
     env->features = arm_host_cpu_features.features;
+}
+
+bool kvm_arm_pmu_supported(CPUState *cpu)
+{
+    KVMState *s = KVM_STATE(current_machine->accelerator);
+
+    return kvm_check_extension(s, KVM_CAP_ARM_PMU_V3);
+}
+
+int kvm_arm_get_max_vm_ipa_size(MachineState *ms)
+{
+    KVMState *s = KVM_STATE(ms->accelerator);
+    int ret;
+
+    ret = kvm_check_extension(s, KVM_CAP_ARM_VM_IPA_SIZE);
+    return ret > 0 ? ret : 40;
 }
 
 int kvm_arch_init(MachineState *ms, KVMState *s)
 {
+    int ret = 0;
     /* For ARM interrupt delivery is always asynchronous,
      * whether we are using an in-kernel VGIC or not.
      */
@@ -176,7 +196,14 @@ int kvm_arch_init(MachineState *ms, KVMState *s)
 
     cap_has_mp_state = kvm_check_extension(s, KVM_CAP_MP_STATE);
 
-    return 0;
+    if (ms->smp.cpus > 256 &&
+        !kvm_check_extension(s, KVM_CAP_ARM_IRQ_LINE_LAYOUT_2)) {
+        error_report("Using more than 256 vcpus requires a host kernel "
+                     "with KVM_CAP_ARM_IRQ_LINE_LAYOUT_2");
+        ret = -EINVAL;
+    }
+
+    return ret;
 }
 
 unsigned long kvm_arch_vcpu_id(CPUState *cpu)
@@ -205,7 +232,7 @@ typedef struct KVMDevice {
     int dev_fd;
 } KVMDevice;
 
-static QSLIST_HEAD(kvm_devices_head, KVMDevice) kvm_devices_head;
+static QSLIST_HEAD(, KVMDevice) kvm_devices_head;
 
 static void kvm_arm_devlistener_add(MemoryListener *listener,
                                     MemoryRegionSection *section)
@@ -486,6 +513,14 @@ void kvm_arm_reset_vcpu(ARMCPU *cpu)
         fprintf(stderr, "write_kvmstate_to_list failed\n");
         abort();
     }
+    /*
+     * Sync the reset values also into the CPUState. This is necessary
+     * because the next thing we do will be a kvm_arch_put_registers()
+     * which will update the list values from the CPUState before copying
+     * the list values back to KVM. It's OK to ignore failure returns here
+     * for the same reason we do so in kvm_arch_get_registers().
+     */
+    write_list_to_cpustate(cpu);
 }
 
 /*
@@ -715,6 +750,18 @@ int kvm_arm_vgic_probe(void)
     } else {
         return 0;
     }
+}
+
+int kvm_arm_set_irq(int cpu, int irqtype, int irq, int level)
+{
+    int kvm_irq = (irqtype << KVM_ARM_IRQ_TYPE_SHIFT) | irq;
+    int cpu_idx1 = cpu % 256;
+    int cpu_idx2 = cpu / 256;
+
+    kvm_irq |= (cpu_idx1 << KVM_ARM_IRQ_VCPU_SHIFT) |
+               (cpu_idx2 << KVM_ARM_IRQ_VCPU2_SHIFT);
+
+    return kvm_set_irq(kvm_state, kvm_irq, !!level);
 }
 
 int kvm_arch_fixup_msi_route(struct kvm_irq_routing_entry *route,

@@ -34,6 +34,8 @@ typedef void (*QemuRecMutexLockFunc)(QemuRecMutex *m, const char *f, int l);
 typedef int (*QemuRecMutexTrylockFunc)(QemuRecMutex *m, const char *f, int l);
 typedef void (*QemuCondWaitFunc)(QemuCond *c, QemuMutex *m, const char *f,
                                  int l);
+typedef bool (*QemuCondTimedWaitFunc)(QemuCond *c, QemuMutex *m, int ms,
+                                      const char *f, int l);
 
 extern QemuMutexLockFunc qemu_bql_mutex_lock_func;
 extern QemuMutexLockFunc qemu_mutex_lock_func;
@@ -41,6 +43,7 @@ extern QemuMutexTrylockFunc qemu_mutex_trylock_func;
 extern QemuRecMutexLockFunc qemu_rec_mutex_lock_func;
 extern QemuRecMutexTrylockFunc qemu_rec_mutex_trylock_func;
 extern QemuCondWaitFunc qemu_cond_wait_func;
+extern QemuCondTimedWaitFunc qemu_cond_timedwait_func;
 
 /* convenience macros to bypass the profiler */
 #define qemu_mutex_lock__raw(m)                         \
@@ -63,6 +66,8 @@ extern QemuCondWaitFunc qemu_cond_wait_func;
             qemu_rec_mutex_trylock_impl(m, __FILE__, __LINE__);
 #define qemu_cond_wait(c, m)                                            \
             qemu_cond_wait_impl(c, m, __FILE__, __LINE__);
+#define qemu_cond_timedwait(c, m, ms)                                   \
+            qemu_cond_wait_impl(c, m, ms, __FILE__, __LINE__);
 #else
 #define qemu_mutex_lock(m) ({                                           \
             QemuMutexLockFunc _f = atomic_read(&qemu_mutex_lock_func);  \
@@ -88,6 +93,11 @@ extern QemuCondWaitFunc qemu_cond_wait_func;
 #define qemu_cond_wait(c, m) ({                                         \
             QemuCondWaitFunc _f = atomic_read(&qemu_cond_wait_func);    \
             _f(c, m, __FILE__, __LINE__);                               \
+        })
+
+#define qemu_cond_timedwait(c, m, ms) ({                                       \
+            QemuCondTimedWaitFunc _f = atomic_read(&qemu_cond_timedwait_func); \
+            _f(c, m, ms, __FILE__, __LINE__);                                  \
         })
 #endif
 
@@ -134,10 +144,19 @@ void qemu_cond_signal(QemuCond *cond);
 void qemu_cond_broadcast(QemuCond *cond);
 void qemu_cond_wait_impl(QemuCond *cond, QemuMutex *mutex,
                          const char *file, const int line);
+bool qemu_cond_timedwait_impl(QemuCond *cond, QemuMutex *mutex, int ms,
+                              const char *file, const int line);
 
 static inline void (qemu_cond_wait)(QemuCond *cond, QemuMutex *mutex)
 {
     qemu_cond_wait(cond, mutex);
+}
+
+/* Returns true if timeout has not expired, and false otherwise */
+static inline bool (qemu_cond_timedwait)(QemuCond *cond, QemuMutex *mutex,
+                                         int ms)
+{
+    return qemu_cond_timedwait(cond, mutex, ms);
 }
 
 void qemu_sem_init(QemuSemaphore *sem, int init);
@@ -162,7 +181,29 @@ void qemu_thread_exit(void *retval);
 void qemu_thread_naming(bool enable);
 
 struct Notifier;
+/**
+ * qemu_thread_atexit_add:
+ * @notifier: Notifier to add
+ *
+ * Add the specified notifier to a list which will be run via
+ * notifier_list_notify() when this thread exits (either by calling
+ * qemu_thread_exit() or by returning from its start_routine).
+ * The usual usage is that the caller passes a Notifier which is
+ * a per-thread variable; it can then use the callback to free
+ * other per-thread data.
+ *
+ * If the thread exits as part of the entire process exiting,
+ * it is unspecified whether notifiers are called or not.
+ */
 void qemu_thread_atexit_add(struct Notifier *notifier);
+/**
+ * qemu_thread_atexit_remove:
+ * @notifier: Notifier to remove
+ *
+ * Remove the specified notifier from the thread-exit notification
+ * list. It is not valid to try to remove a notifier which is not
+ * on the list.
+ */
 void qemu_thread_atexit_remove(struct Notifier *notifier);
 
 struct QemuSpin {

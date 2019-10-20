@@ -4125,12 +4125,11 @@ static intptr_t max_for_page(target_ulong base, intptr_t mem_off,
     return MIN(split, mem_max - mem_off) + mem_off;
 }
 
-static inline void set_helper_retaddr(uintptr_t ra)
-{
-#ifdef CONFIG_USER_ONLY
-    helper_retaddr = ra;
+#ifndef CONFIG_USER_ONLY
+/* These are normally defined only for CONFIG_USER_ONLY in <exec/cpu_ldst.h> */
+static inline void set_helper_retaddr(uintptr_t ra) { }
+static inline void clear_helper_retaddr(void) { }
 #endif
-}
 
 /*
  * The result of tlb_vaddr_to_host for user-only is just g2h(x),
@@ -4188,7 +4187,7 @@ static void sve_ld1_r(CPUARMState *env, void *vg, const target_ulong addr,
         if (test_host_page(host)) {
             mem_off = host_fn(vd, vg, host - mem_off, mem_off, mem_max);
             tcg_debug_assert(mem_off == mem_max);
-            set_helper_retaddr(0);
+            clear_helper_retaddr();
             /* After having taken any fault, zero leading inactive elements. */
             swap_memzero(vd, reg_off);
             return;
@@ -4239,7 +4238,7 @@ static void sve_ld1_r(CPUARMState *env, void *vg, const target_ulong addr,
     }
 #endif
 
-    set_helper_retaddr(0);
+    clear_helper_retaddr();
     memcpy(vd, &scratch, reg_max);
 }
 
@@ -4312,7 +4311,7 @@ static void sve_ld2_r(CPUARMState *env, void *vg, target_ulong addr,
             addr += 2 * size;
         } while (i & 15);
     }
-    set_helper_retaddr(0);
+    clear_helper_retaddr();
 
     /* Wait until all exceptions have been raised to write back.  */
     memcpy(&env->vfp.zregs[rd], &scratch[0], oprsz);
@@ -4341,7 +4340,7 @@ static void sve_ld3_r(CPUARMState *env, void *vg, target_ulong addr,
             addr += 3 * size;
         } while (i & 15);
     }
-    set_helper_retaddr(0);
+    clear_helper_retaddr();
 
     /* Wait until all exceptions have been raised to write back.  */
     memcpy(&env->vfp.zregs[rd], &scratch[0], oprsz);
@@ -4372,7 +4371,7 @@ static void sve_ld4_r(CPUARMState *env, void *vg, target_ulong addr,
             addr += 4 * size;
         } while (i & 15);
     }
-    set_helper_retaddr(0);
+    clear_helper_retaddr();
 
     /* Wait until all exceptions have been raised to write back.  */
     memcpy(&env->vfp.zregs[rd], &scratch[0], oprsz);
@@ -4382,20 +4381,20 @@ static void sve_ld4_r(CPUARMState *env, void *vg, target_ulong addr,
 }
 
 #define DO_LDN_1(N) \
-void __attribute__((flatten)) HELPER(sve_ld##N##bb_r)               \
+void QEMU_FLATTEN HELPER(sve_ld##N##bb_r) \
     (CPUARMState *env, void *vg, target_ulong addr, uint32_t desc)  \
 {                                                                   \
     sve_ld##N##_r(env, vg, addr, desc, 1, GETPC(), sve_ld1bb_tlb);  \
 }
 
 #define DO_LDN_2(N, SUFF, SIZE)                                       \
-void __attribute__((flatten)) HELPER(sve_ld##N##SUFF##_le_r)          \
+void QEMU_FLATTEN HELPER(sve_ld##N##SUFF##_le_r)                      \
     (CPUARMState *env, void *vg, target_ulong addr, uint32_t desc)    \
 {                                                                     \
     sve_ld##N##_r(env, vg, addr, desc, SIZE, GETPC(),                 \
                   sve_ld1##SUFF##_le_tlb);                            \
 }                                                                     \
-void __attribute__((flatten)) HELPER(sve_ld##N##SUFF##_be_r)          \
+void QEMU_FLATTEN HELPER(sve_ld##N##SUFF##_be_r)                      \
     (CPUARMState *env, void *vg, target_ulong addr, uint32_t desc)    \
 {                                                                     \
     sve_ld##N##_r(env, vg, addr, desc, SIZE, GETPC(),                 \
@@ -4494,7 +4493,7 @@ static void sve_ldff1_r(CPUARMState *env, void *vg, const target_ulong addr,
         if (test_host_page(host)) {
             mem_off = host_fn(vd, vg, host - mem_off, mem_off, mem_max);
             tcg_debug_assert(mem_off == mem_max);
-            set_helper_retaddr(0);
+            clear_helper_retaddr();
             /* After any fault, zero any leading inactive elements.  */
             swap_memzero(vd, reg_off);
             return;
@@ -4537,7 +4536,7 @@ static void sve_ldff1_r(CPUARMState *env, void *vg, const target_ulong addr,
     }
 #endif
 
-    set_helper_retaddr(0);
+    clear_helper_retaddr();
     record_fault(env, reg_off, reg_max);
 }
 
@@ -4598,11 +4597,7 @@ static void sve_ldnf1_r(CPUARMState *env, void *vg, const target_ulong addr,
      * in the real world, obviously.)
      *
      * Then there are the annoying special cases with watchpoints...
-     *
-     * TODO: Add a form of tlb_fill that does not raise an exception,
-     * with a form of tlb_vaddr_to_host and a set of loads to match.
-     * The non_fault_vaddr_to_host would handle everything, usually,
-     * and the loads would handle the iomem path for watchpoints.
+     * TODO: Add a form of non-faulting loads using cc->tlb_fill(probe=true).
      */
     host = tlb_vaddr_to_host(env, addr + mem_off, MMU_DATA_LOAD, mmu_idx);
     split = max_for_page(addr, mem_off, mem_max);
@@ -4744,7 +4739,7 @@ static void sve_st1_r(CPUARMState *env, void *vg, target_ulong addr,
             addr += msize;
         } while (i & 15);
     }
-    set_helper_retaddr(0);
+    clear_helper_retaddr();
 }
 
 static void sve_st2_r(CPUARMState *env, void *vg, target_ulong addr,
@@ -4770,7 +4765,7 @@ static void sve_st2_r(CPUARMState *env, void *vg, target_ulong addr,
             addr += 2 * msize;
         } while (i & 15);
     }
-    set_helper_retaddr(0);
+    clear_helper_retaddr();
 }
 
 static void sve_st3_r(CPUARMState *env, void *vg, target_ulong addr,
@@ -4798,7 +4793,7 @@ static void sve_st3_r(CPUARMState *env, void *vg, target_ulong addr,
             addr += 3 * msize;
         } while (i & 15);
     }
-    set_helper_retaddr(0);
+    clear_helper_retaddr();
 }
 
 static void sve_st4_r(CPUARMState *env, void *vg, target_ulong addr,
@@ -4828,11 +4823,11 @@ static void sve_st4_r(CPUARMState *env, void *vg, target_ulong addr,
             addr += 4 * msize;
         } while (i & 15);
     }
-    set_helper_retaddr(0);
+    clear_helper_retaddr();
 }
 
 #define DO_STN_1(N, NAME, ESIZE) \
-void __attribute__((flatten)) HELPER(sve_st##N##NAME##_r)           \
+void QEMU_FLATTEN HELPER(sve_st##N##NAME##_r) \
     (CPUARMState *env, void *vg, target_ulong addr, uint32_t desc)  \
 {                                                                   \
     sve_st##N##_r(env, vg, addr, desc, GETPC(), ESIZE, 1,           \
@@ -4840,13 +4835,13 @@ void __attribute__((flatten)) HELPER(sve_st##N##NAME##_r)           \
 }
 
 #define DO_STN_2(N, NAME, ESIZE, MSIZE) \
-void __attribute__((flatten)) HELPER(sve_st##N##NAME##_le_r)          \
+void QEMU_FLATTEN HELPER(sve_st##N##NAME##_le_r) \
     (CPUARMState *env, void *vg, target_ulong addr, uint32_t desc)    \
 {                                                                     \
     sve_st##N##_r(env, vg, addr, desc, GETPC(), ESIZE, MSIZE,         \
                   sve_st1##NAME##_le_tlb);                            \
 }                                                                     \
-void __attribute__((flatten)) HELPER(sve_st##N##NAME##_be_r)          \
+void QEMU_FLATTEN HELPER(sve_st##N##NAME##_be_r)                      \
     (CPUARMState *env, void *vg, target_ulong addr, uint32_t desc)    \
 {                                                                     \
     sve_st##N##_r(env, vg, addr, desc, GETPC(), ESIZE, MSIZE,         \
@@ -4936,7 +4931,7 @@ static void sve_ld1_zs(CPUARMState *env, void *vd, void *vg, void *vm,
             i += 4, pg >>= 4;
         } while (i & 15);
     }
-    set_helper_retaddr(0);
+    clear_helper_retaddr();
 
     /* Wait until all exceptions have been raised to write back.  */
     memcpy(vd, &scratch, oprsz);
@@ -4959,14 +4954,14 @@ static void sve_ld1_zd(CPUARMState *env, void *vd, void *vg, void *vm,
             tlb_fn(env, &scratch, i * 8, base + (off << scale), oi, ra);
         }
     }
-    set_helper_retaddr(0);
+    clear_helper_retaddr();
 
     /* Wait until all exceptions have been raised to write back.  */
     memcpy(vd, &scratch, oprsz * 8);
 }
 
 #define DO_LD1_ZPZ_S(MEM, OFS) \
-void __attribute__((flatten)) HELPER(sve_ld##MEM##_##OFS)    \
+void QEMU_FLATTEN HELPER(sve_ld##MEM##_##OFS) \
     (CPUARMState *env, void *vd, void *vg, void *vm,         \
      target_ulong base, uint32_t desc)                       \
 {                                                            \
@@ -4975,7 +4970,7 @@ void __attribute__((flatten)) HELPER(sve_ld##MEM##_##OFS)    \
 }
 
 #define DO_LD1_ZPZ_D(MEM, OFS) \
-void __attribute__((flatten)) HELPER(sve_ld##MEM##_##OFS)    \
+void QEMU_FLATTEN HELPER(sve_ld##MEM##_##OFS) \
     (CPUARMState *env, void *vd, void *vg, void *vm,         \
      target_ulong base, uint32_t desc)                       \
 {                                                            \
@@ -5137,7 +5132,7 @@ static inline void sve_ldff1_zs(CPUARMState *env, void *vd, void *vg, void *vm,
         tlb_fn(env, vd, reg_off, addr, oi, ra);
 
         /* The rest of the reads will be non-faulting.  */
-        set_helper_retaddr(0);
+        clear_helper_retaddr();
     }
 
     /* After any fault, zero the leading predicated false elements.  */
@@ -5179,7 +5174,7 @@ static inline void sve_ldff1_zd(CPUARMState *env, void *vd, void *vg, void *vm,
         tlb_fn(env, vd, reg_off, addr, oi, ra);
 
         /* The rest of the reads will be non-faulting.  */
-        set_helper_retaddr(0);
+        clear_helper_retaddr();
     }
 
     /* After any fault, zero the leading predicated false elements.  */
@@ -5303,7 +5298,7 @@ static void sve_st1_zs(CPUARMState *env, void *vd, void *vg, void *vm,
             i += 4, pg >>= 4;
         } while (i & 15);
     }
-    set_helper_retaddr(0);
+    clear_helper_retaddr();
 }
 
 static void sve_st1_zd(CPUARMState *env, void *vd, void *vg, void *vm,
@@ -5322,11 +5317,11 @@ static void sve_st1_zd(CPUARMState *env, void *vd, void *vg, void *vm,
             tlb_fn(env, vd, i * 8, base + (off << scale), oi, ra);
         }
     }
-    set_helper_retaddr(0);
+    clear_helper_retaddr();
 }
 
 #define DO_ST1_ZPZ_S(MEM, OFS) \
-void __attribute__((flatten)) HELPER(sve_st##MEM##_##OFS)    \
+void QEMU_FLATTEN HELPER(sve_st##MEM##_##OFS) \
     (CPUARMState *env, void *vd, void *vg, void *vm,         \
      target_ulong base, uint32_t desc)                       \
 {                                                            \
@@ -5335,7 +5330,7 @@ void __attribute__((flatten)) HELPER(sve_st##MEM##_##OFS)    \
 }
 
 #define DO_ST1_ZPZ_D(MEM, OFS) \
-void __attribute__((flatten)) HELPER(sve_st##MEM##_##OFS)    \
+void QEMU_FLATTEN HELPER(sve_st##MEM##_##OFS) \
     (CPUARMState *env, void *vd, void *vg, void *vm,         \
      target_ulong base, uint32_t desc)                       \
 {                                                            \

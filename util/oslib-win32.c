@@ -29,8 +29,10 @@
  * this file are based on code from GNOME glib-2 and use a different license,
  * see the license comment there.
  */
+
 #include "qemu/osdep.h"
 #include <windows.h>
+#include "qemu-common.h"
 #include "qapi/error.h"
 #include "sysemu/sysemu.h"
 #include "qemu/main-loop.h"
@@ -560,7 +562,6 @@ void os_mem_prealloc(int fd, char *area, size_t memory, int smp_cpus,
     }
 }
 
-
 char *qemu_get_pid_name(pid_t pid)
 {
     /* XXX Implement me */
@@ -584,7 +585,11 @@ int qemu_connect_wrap(int sockfd, const struct sockaddr *addr,
     int ret;
     ret = connect(sockfd, addr, addrlen);
     if (ret < 0) {
-        errno = socket_error();
+        if (WSAGetLastError() == WSAEWOULDBLOCK) {
+            errno = EINPROGRESS;
+        } else {
+            errno = socket_error();
+        }
     }
     return ret;
 }

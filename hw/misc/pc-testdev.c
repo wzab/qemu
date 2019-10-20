@@ -32,12 +32,12 @@
  * -kernel /home/lmr/Code/virt-test.git/kvm/unittests/msr.flat
  *
  * Where msr.flat is one of the KVM unittests, present on a separate repo,
- * git://git.kernel.org/pub/scm/virt/kvm/kvm-unit-tests.git
+ * https://git.kernel.org/pub/scm/virt/kvm/kvm-unit-tests.git
 */
 
 #include "qemu/osdep.h"
-#include "hw/hw.h"
-#include "hw/qdev.h"
+#include "qemu/module.h"
+#include "hw/irq.h"
 #include "hw/isa/isa.h"
 
 #define IOMEM_LEN    0x10000

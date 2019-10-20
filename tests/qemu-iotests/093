@@ -38,7 +38,7 @@ class ThrottleTestCase(iotests.QMPTestCase):
     def setUp(self):
         self.vm = iotests.VM()
         for i in range(0, self.max_drives):
-            self.vm.add_drive(self.test_img)
+            self.vm.add_drive(self.test_img, "file.read-zeroes=on")
         self.vm.launch()
 
     def tearDown(self):
@@ -69,18 +69,18 @@ class ThrottleTestCase(iotests.QMPTestCase):
         # in. The throttled requests won't be executed until we
         # advance the virtual clock.
         rq_size = 512
-        rd_nr = max(params['bps'] / rq_size / 2,
-                    params['bps_rd'] / rq_size,
-                    params['iops'] / 2,
+        rd_nr = max(params['bps'] // rq_size // 2,
+                    params['bps_rd'] // rq_size,
+                    params['iops'] // 2,
                     params['iops_rd'])
         rd_nr *= seconds * 2
-        rd_nr /= ndrives
-        wr_nr = max(params['bps'] / rq_size / 2,
-                    params['bps_wr'] / rq_size,
-                    params['iops'] / 2,
+        rd_nr //= ndrives
+        wr_nr = max(params['bps'] // rq_size // 2,
+                    params['bps_wr'] // rq_size,
+                    params['iops'] // 2,
                     params['iops_wr'])
         wr_nr *= seconds * 2
-        wr_nr /= ndrives
+        wr_nr //= ndrives
 
         # Send I/O requests to all drives
         for i in range(rd_nr):
@@ -196,7 +196,7 @@ class ThrottleTestCase(iotests.QMPTestCase):
             self.configure_throttle(ndrives, settings)
 
             # Wait for the bucket to empty so we can do bursts
-            wait_ns = nsec_per_sec * burst_length * burst_rate / rate
+            wait_ns = nsec_per_sec * burst_length * burst_rate // rate
             self.vm.qtest("clock_step %d" % wait_ns)
 
             # Test I/O at the max burst rate
@@ -273,7 +273,8 @@ class ThrottleTestGroupNames(iotests.QMPTestCase):
     def setUp(self):
         self.vm = iotests.VM()
         for i in range(0, self.max_drives):
-            self.vm.add_drive(self.test_img, "throttling.iops-total=100")
+            self.vm.add_drive(self.test_img,
+                              "throttling.iops-total=100,file.read-zeroes=on")
         self.vm.launch()
 
     def tearDown(self):
@@ -366,10 +367,8 @@ class ThrottleTestGroupNames(iotests.QMPTestCase):
 class ThrottleTestRemovableMedia(iotests.QMPTestCase):
     def setUp(self):
         self.vm = iotests.VM()
-        if iotests.qemu_default_machine == 's390-ccw-virtio':
-            self.vm.add_device("virtio-scsi-ccw,id=virtio-scsi")
-        else:
-            self.vm.add_device("virtio-scsi-pci,id=virtio-scsi")
+        self.vm.add_device("{},id=virtio-scsi".format(
+            iotests.get_virtio_scsi_device()))
         self.vm.launch()
 
     def tearDown(self):
@@ -378,10 +377,10 @@ class ThrottleTestRemovableMedia(iotests.QMPTestCase):
     def test_removable_media(self):
         # Add a couple of dummy nodes named cd0 and cd1
         result = self.vm.qmp("blockdev-add", driver="null-aio",
-                             node_name="cd0")
+                             read_zeroes=True, node_name="cd0")
         self.assert_qmp(result, 'return', {})
         result = self.vm.qmp("blockdev-add", driver="null-aio",
-                             node_name="cd1")
+                             read_zeroes=True, node_name="cd1")
         self.assert_qmp(result, 'return', {})
 
         # Attach a CD drive with cd0 inserted

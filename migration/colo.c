@@ -23,18 +23,26 @@
 #include "io/channel-buffer.h"
 #include "trace.h"
 #include "qemu/error-report.h"
+#include "qemu/main-loop.h"
+#include "qemu/rcu.h"
 #include "migration/failover.h"
+#ifdef CONFIG_REPLICATION
 #include "replication.h"
+#endif
 #include "net/colo-compare.h"
 #include "net/colo.h"
 #include "block/block.h"
 #include "qapi/qapi-events-migration.h"
 #include "qapi/qmp/qerror.h"
 #include "sysemu/cpus.h"
+#include "sysemu/runstate.h"
 #include "net/filter.h"
 
 static bool vmstate_loading;
 static Notifier packets_compare_notifier;
+
+/* User need to know colo mode after COLO failover */
+static COLOMode last_colo_mode;
 
 #define COLO_BUFFER_BASE_SIZE (4 * 1024 * 1024)
 
@@ -59,6 +67,8 @@ static bool colo_runstate_is_stopped(void)
 
 static void secondary_vm_do_failover(void)
 {
+/* COLO needs enable block-replication */
+#ifdef CONFIG_REPLICATION
     int old_state;
     MigrationIncomingState *mis = migration_incoming_get_current();
     Error *local_err = NULL;
@@ -117,14 +127,19 @@ static void secondary_vm_do_failover(void)
     }
     /* Notify COLO incoming thread that failover work is finished */
     qemu_sem_post(&mis->colo_incoming_sem);
+
     /* For Secondary VM, jump to incoming co */
     if (mis->migration_incoming_co) {
         qemu_coroutine_enter(mis->migration_incoming_co);
     }
+#else
+    abort();
+#endif
 }
 
 static void primary_vm_do_failover(void)
 {
+#ifdef CONFIG_REPLICATION
     MigrationState *s = migrate_get_current();
     int old_state;
     Error *local_err = NULL;
@@ -165,6 +180,9 @@ static void primary_vm_do_failover(void)
 
     /* Notify COLO thread that failover work is finished */
     qemu_sem_post(&s->colo_exit_sem);
+#else
+    abort();
+#endif
 }
 
 COLOMode get_colo_mode(void)
@@ -178,25 +196,31 @@ COLOMode get_colo_mode(void)
     }
 }
 
-void colo_do_failover(MigrationState *s)
+void colo_do_failover(void)
 {
     /* Make sure VM stopped while failover happened. */
     if (!colo_runstate_is_stopped()) {
         vm_stop_force_state(RUN_STATE_COLO);
     }
 
-    if (get_colo_mode() == COLO_MODE_PRIMARY) {
+    switch (get_colo_mode()) {
+    case COLO_MODE_PRIMARY:
         primary_vm_do_failover();
-    } else {
+        break;
+    case COLO_MODE_SECONDARY:
         secondary_vm_do_failover();
+        break;
+    default:
+        error_report("colo_do_failover failed because the colo mode"
+                     " could not be obtained");
     }
 }
 
+#ifdef CONFIG_REPLICATION
 void qmp_xen_set_replication(bool enable, bool primary,
                              bool has_failover, bool failover,
                              Error **errp)
 {
-#ifdef CONFIG_REPLICATION
     ReplicationMode mode = primary ?
                            REPLICATION_MODE_PRIMARY :
                            REPLICATION_MODE_SECONDARY;
@@ -215,14 +239,10 @@ void qmp_xen_set_replication(bool enable, bool primary,
         }
         replication_stop_all(failover, failover ? NULL : errp);
     }
-#else
-    abort();
-#endif
 }
 
 ReplicationStatus *qmp_query_xen_replication_status(Error **errp)
 {
-#ifdef CONFIG_REPLICATION
     Error *err = NULL;
     ReplicationStatus *s = g_new0(ReplicationStatus, 1);
 
@@ -237,35 +257,36 @@ ReplicationStatus *qmp_query_xen_replication_status(Error **errp)
 
     error_free(err);
     return s;
-#else
-    abort();
-#endif
 }
 
 void qmp_xen_colo_do_checkpoint(Error **errp)
 {
-#ifdef CONFIG_REPLICATION
     replication_do_checkpoint_all(errp);
-#else
-    abort();
-#endif
+    /* Notify all filters of all NIC to do checkpoint */
+    colo_notify_filters_event(COLO_EVENT_CHECKPOINT, errp);
 }
+#endif
 
 COLOStatus *qmp_query_colo_status(Error **errp)
 {
     COLOStatus *s = g_new0(COLOStatus, 1);
 
     s->mode = get_colo_mode();
+    s->last_mode = last_colo_mode;
 
     switch (failover_get_state()) {
     case FAILOVER_STATUS_NONE:
         s->reason = COLO_EXIT_REASON_NONE;
         break;
-    case FAILOVER_STATUS_REQUIRE:
+    case FAILOVER_STATUS_COMPLETED:
         s->reason = COLO_EXIT_REASON_REQUEST;
         break;
     default:
-        s->reason = COLO_EXIT_REASON_ERROR;
+        if (migration_in_colo_state()) {
+            s->reason = COLO_EXIT_REASON_PROCESSING;
+        } else {
+            s->reason = COLO_EXIT_REASON_ERROR;
+        }
     }
 
     return s;
@@ -415,11 +436,16 @@ static int colo_do_checkpoint_transaction(MigrationState *s,
     /* Disable block migration */
     migrate_set_block_enabled(false, &local_err);
     qemu_mutex_lock_iothread();
+
+#ifdef CONFIG_REPLICATION
     replication_do_checkpoint_all(&local_err);
     if (local_err) {
         qemu_mutex_unlock_iothread();
         goto out;
     }
+#else
+        abort();
+#endif
 
     colo_send_message(s->to_dst_file, COLO_MESSAGE_VMSTATE_SEND, &local_err);
     if (local_err) {
@@ -498,6 +524,12 @@ static void colo_process_checkpoint(MigrationState *s)
     Error *local_err = NULL;
     int ret;
 
+    last_colo_mode = get_colo_mode();
+    if (last_colo_mode != COLO_MODE_PRIMARY) {
+        error_report("COLO mode must be COLO_MODE_PRIMARY");
+        return;
+    }
+
     failover_init_state();
 
     s->rp_state.from_dst_file = qemu_file_get_return_path(s->to_dst_file);
@@ -523,11 +555,15 @@ static void colo_process_checkpoint(MigrationState *s)
     object_unref(OBJECT(bioc));
 
     qemu_mutex_lock_iothread();
+#ifdef CONFIG_REPLICATION
     replication_start_all(REPLICATION_MODE_PRIMARY, &local_err);
     if (local_err) {
         qemu_mutex_unlock_iothread();
         goto out;
     }
+#else
+        abort();
+#endif
 
     vm_start();
     qemu_mutex_unlock_iothread();
@@ -568,16 +604,13 @@ out:
      * or the user triggered failover.
      */
     switch (failover_get_state()) {
-    case FAILOVER_STATUS_NONE:
-        qapi_event_send_colo_exit(COLO_MODE_PRIMARY,
-                                  COLO_EXIT_REASON_ERROR);
-        break;
-    case FAILOVER_STATUS_REQUIRE:
+    case FAILOVER_STATUS_COMPLETED:
         qapi_event_send_colo_exit(COLO_MODE_PRIMARY,
                                   COLO_EXIT_REASON_REQUEST);
         break;
     default:
-        abort();
+        qapi_event_send_colo_exit(COLO_MODE_PRIMARY,
+                                  COLO_EXIT_REASON_ERROR);
     }
 
     /* Hope this not to be too long to wait here */
@@ -670,6 +703,12 @@ void *colo_process_incoming_thread(void *opaque)
     migrate_set_state(&mis->state, MIGRATION_STATUS_ACTIVE,
                       MIGRATION_STATUS_COLO);
 
+    last_colo_mode = get_colo_mode();
+    if (last_colo_mode != COLO_MODE_SECONDARY) {
+        error_report("COLO mode must be COLO_MODE_SECONDARY");
+        return NULL;
+    }
+
     failover_init_state();
 
     mis->to_src_file = qemu_file_get_return_path(mis->from_src_file);
@@ -690,11 +729,15 @@ void *colo_process_incoming_thread(void *opaque)
     object_unref(OBJECT(bioc));
 
     qemu_mutex_lock_iothread();
+#ifdef CONFIG_REPLICATION
     replication_start_all(REPLICATION_MODE_SECONDARY, &local_err);
     if (local_err) {
         qemu_mutex_unlock_iothread();
         goto out;
     }
+#else
+        abort();
+#endif
     vm_start();
     trace_colo_vm_state_change("stop", "run");
     qemu_mutex_unlock_iothread();
@@ -785,18 +828,22 @@ void *colo_process_incoming_thread(void *opaque)
             goto out;
         }
 
+#ifdef CONFIG_REPLICATION
         replication_get_error_all(&local_err);
         if (local_err) {
             qemu_mutex_unlock_iothread();
             goto out;
         }
+
         /* discard colo disk buffer */
         replication_do_checkpoint_all(&local_err);
         if (local_err) {
             qemu_mutex_unlock_iothread();
             goto out;
         }
-
+#else
+        abort();
+#endif
         /* Notify all filters of all NIC to do checkpoint */
         colo_notify_filters_event(COLO_EVENT_CHECKPOINT, &local_err);
 
@@ -831,17 +878,18 @@ out:
         error_report_err(local_err);
     }
 
+    /*
+     * There are only two reasons we can get here, some error happened
+     * or the user triggered failover.
+     */
     switch (failover_get_state()) {
-    case FAILOVER_STATUS_NONE:
-        qapi_event_send_colo_exit(COLO_MODE_SECONDARY,
-                                  COLO_EXIT_REASON_ERROR);
-        break;
-    case FAILOVER_STATUS_REQUIRE:
+    case FAILOVER_STATUS_COMPLETED:
         qapi_event_send_colo_exit(COLO_MODE_SECONDARY,
                                   COLO_EXIT_REASON_REQUEST);
         break;
     default:
-        abort();
+        qapi_event_send_colo_exit(COLO_MODE_SECONDARY,
+                                  COLO_EXIT_REASON_ERROR);
     }
 
     if (fb) {
@@ -854,8 +902,8 @@ out:
     /* Must be called after failover BH is completed */
     if (mis->to_src_file) {
         qemu_fclose(mis->to_src_file);
+        mis->to_src_file = NULL;
     }
-    migration_incoming_disable_colo();
 
     rcu_unregister_thread();
     return NULL;

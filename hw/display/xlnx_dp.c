@@ -25,7 +25,10 @@
 #include "qemu/osdep.h"
 #include "qapi/error.h"
 #include "qemu/log.h"
+#include "qemu/module.h"
 #include "hw/display/xlnx_dp.h"
+#include "hw/irq.h"
+#include "migration/vmstate.h"
 
 #ifndef DEBUG_DP
 #define DEBUG_DP 0
@@ -426,11 +429,18 @@ static uint8_t xlnx_dp_aux_pop_rx_fifo(XlnxDPState *s)
     uint8_t ret;
 
     if (fifo8_is_empty(&s->rx_fifo)) {
-        DPRINTF("rx_fifo underflow..\n");
-        abort();
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "%s: Reading empty RX_FIFO\n",
+                      __func__);
+        /*
+         * The datasheet is not clear about the reset value, it seems
+         * to be unspecified. We choose to return '0'.
+         */
+        ret = 0;
+    } else {
+        ret = fifo8_pop(&s->rx_fifo);
+        DPRINTF("pop 0x%" PRIX8 " from rx_fifo.\n", ret);
     }
-    ret = fifo8_pop(&s->rx_fifo);
-    DPRINTF("pop 0x%" PRIX8 " from rx_fifo.\n", ret);
     return ret;
 }
 
@@ -1260,7 +1270,7 @@ static void xlnx_dp_realize(DeviceState *dev, Error **errp)
 
     as.freq = 44100;
     as.nchannels = 2;
-    as.fmt = AUD_FMT_S16;
+    as.fmt = AUDIO_FORMAT_S16;
     as.endianness = 0;
 
     AUD_register_card("xlnx_dp.audio", &s->aud_card);

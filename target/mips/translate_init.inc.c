@@ -411,65 +411,6 @@ const mips_def_t mips_defs[] =
         .mmu_type = MMU_TYPE_R4000,
     },
     {
-        /*
-         * The Toshiba TX System RISC TX79 Core Architecture manual
-         *
-         * https://wiki.qemu.org/File:C790.pdf
-         *
-         * describes the C790 processor that is a follow-up to the R5900.
-         * There are a few notable differences in that the R5900 FPU
-         *
-         * - is not IEEE 754-1985 compliant,
-         * - does not implement double format, and
-         * - its machine code is nonstandard.
-         */
-        .name = "R5900",
-        .CP0_PRid = 0x00002E00,
-        /* No L2 cache, icache size 32k, dcache size 32k, uncached coherency. */
-        .CP0_Config0 = (0x3 << 9) | (0x3 << 6) | (0x2 << CP0C0_K0),
-        .CP0_Status_rw_bitmask = 0xF4C79C1F,
-#ifdef CONFIG_USER_ONLY
-        /*
-         * R5900 hardware traps to the Linux kernel for IEEE 754-1985 and LL/SC
-         * emulation. For user only, QEMU is the kernel, so we emulate the traps
-         * by simply emulating the instructions directly.
-         *
-         * Note: Config1 is only used internally, the R5900 has only Config0.
-         */
-        .CP0_Config1 = (1 << CP0C1_FP) | (47 << CP0C1_MMU),
-        .CP0_LLAddr_rw_bitmask = 0xFFFFFFFF,
-        .CP0_LLAddr_shift = 4,
-        .CP1_fcr0 = (0x38 << FCR0_PRID) | (0x0 << FCR0_REV),
-        .CP1_fcr31 = 0,
-        .CP1_fcr31_rw_bitmask = 0x0183FFFF,
-#else
-        /*
-         * The R5900 COP1 FPU implements single-precision floating-point
-         * operations but is not entirely IEEE 754-1985 compatible. In
-         * particular,
-         *
-         * - NaN (not a number) and +/- infinities are not supported;
-         * - exception mechanisms are not fully supported;
-         * - denormalized numbers are not supported;
-         * - rounding towards nearest and +/- infinities are not supported;
-         * - computed results usually differs in the least significant bit;
-         * - saturations can differ more than the least significant bit.
-         *
-         * Since only rounding towards zero is supported, the two least
-         * significant bits of FCR31 are hardwired to 01.
-         *
-         * FPU emulation is disabled here until it is implemented.
-         *
-         * Note: Config1 is only used internally, the R5900 has only Config0.
-         */
-        .CP0_Config1 = (47 << CP0C1_MMU),
-#endif /* !CONFIG_USER_ONLY */
-        .SEGBITS = 32,
-        .PABITS = 32,
-        .insn_flags = CPU_R5900 | ASE_MMI,
-        .mmu_type = MMU_TYPE_R4000,
-    },
-    {
         /* A generic CPU supporting MIPS32 Release 6 ISA.
            FIXME: Support IEEE 754-2008 FP.
                   Eventually this should be replaced by a real CPU model. */
@@ -781,6 +722,46 @@ const mips_def_t mips_defs[] =
         .mmu_type = MMU_TYPE_R4000,
     },
     {
+        .name = "I6500",
+        .CP0_PRid = 0x1B000,
+        .CP0_Config0 = MIPS_CONFIG0 | (0x2 << CP0C0_AR) | (0x2 << CP0C0_AT) |
+                       (MMU_TYPE_R4000 << CP0C0_MT),
+        .CP0_Config1 = MIPS_CONFIG1 | (1 << CP0C1_FP) | (15 << CP0C1_MMU) |
+                       (2 << CP0C1_IS) | (5 << CP0C1_IL) | (3 << CP0C1_IA) |
+                       (2 << CP0C1_DS) | (5 << CP0C1_DL) | (3 << CP0C1_DA) |
+                       (0 << CP0C1_PC) | (1 << CP0C1_WR) | (1 << CP0C1_EP),
+        .CP0_Config2 = MIPS_CONFIG2,
+        .CP0_Config3 = MIPS_CONFIG3 | (1U << CP0C3_M) |
+                       (1 << CP0C3_CMGCR) | (1 << CP0C3_MSAP) |
+                       (1 << CP0C3_BP) | (1 << CP0C3_BI) | (1 << CP0C3_ULRI) |
+                       (1 << CP0C3_RXI) | (1 << CP0C3_LPA) | (1 << CP0C3_VInt),
+        .CP0_Config4 = MIPS_CONFIG4 | (1U << CP0C4_M) | (3 << CP0C4_IE) |
+                       (1 << CP0C4_AE) | (0xfc << CP0C4_KScrExist),
+        .CP0_Config5 = MIPS_CONFIG5 | (1 << CP0C5_XNP) | (1 << CP0C5_VP) |
+                       (1 << CP0C5_LLB) | (1 << CP0C5_MRP),
+        .CP0_Config5_rw_bitmask = (1 << CP0C5_MSAEn) | (1 << CP0C5_SBRI) |
+                                  (1 << CP0C5_FRE) | (1 << CP0C5_UFE),
+        .CP0_LLAddr_rw_bitmask = 0,
+        .CP0_LLAddr_shift = 0,
+        .SYNCI_Step = 64,
+        .CCRes = 2,
+        .CP0_Status_rw_bitmask = 0x30D8FFFF,
+        .CP0_PageGrain = (1 << CP0PG_IEC) | (1 << CP0PG_XIE) |
+                         (1U << CP0PG_RIE),
+        .CP0_PageGrain_rw_bitmask = (1 << CP0PG_ELPA),
+        .CP0_EBaseWG_rw_bitmask = (1 << CP0EBase_WG),
+        .CP1_fcr0 = (1 << FCR0_FREP) | (1 << FCR0_HAS2008) | (1 << FCR0_F64) |
+                    (1 << FCR0_L) | (1 << FCR0_W) | (1 << FCR0_D) |
+                    (1 << FCR0_S) | (0x03 << FCR0_PRID) | (0x0 << FCR0_REV),
+        .CP1_fcr31 = (1 << FCR31_ABS2008) | (1 << FCR31_NAN2008),
+        .CP1_fcr31_rw_bitmask = 0x0103FFFF,
+        .MSAIR = 0x03 << MSAIR_ProcID,
+        .SEGBITS = 48,
+        .PABITS = 48,
+        .insn_flags = CPU_MIPS64R6 | ASE_MSA,
+        .mmu_type = MMU_TYPE_R4000,
+    },
+    {
         .name = "Loongson-2E",
         .CP0_PRid = 0x6302,
         /* 64KB I-cache and d-cache. 4 way with 32 bit cache line size.  */
@@ -854,13 +835,12 @@ const mips_def_t mips_defs[] =
 };
 const int mips_defs_number = ARRAY_SIZE(mips_defs);
 
-void mips_cpu_list (FILE *f, fprintf_function cpu_fprintf)
+void mips_cpu_list(void)
 {
     int i;
 
     for (i = 0; i < ARRAY_SIZE(mips_defs); i++) {
-        (*cpu_fprintf)(f, "MIPS '%s'\n",
-                       mips_defs[i].name);
+        qemu_printf("MIPS '%s'\n", mips_defs[i].name);
     }
 }
 
@@ -891,8 +871,6 @@ static void r4k_mmu_init (CPUMIPSState *env, const mips_def_t *def)
 
 static void mmu_init (CPUMIPSState *env, const mips_def_t *def)
 {
-    MIPSCPU *cpu = mips_env_get_cpu(env);
-
     env->tlb = g_malloc0(sizeof(CPUMIPSTLBContext));
 
     switch (def->mmu_type) {
@@ -909,7 +887,7 @@ static void mmu_init (CPUMIPSState *env, const mips_def_t *def)
         case MMU_TYPE_R6000:
         case MMU_TYPE_R8000:
         default:
-            cpu_abort(CPU(cpu), "MMU type not supported\n");
+            cpu_abort(env_cpu(env), "MMU type not supported\n");
     }
 }
 #endif /* CONFIG_USER_ONLY */

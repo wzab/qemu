@@ -24,7 +24,11 @@
  * THE SOFTWARE.
  */
 
+#ifndef HW_TIMER_XLNX_ZYNQMP_RTC_H
+#define HW_TIMER_XLNX_ZYNQMP_RTC_H
+
 #include "hw/register.h"
+#include "hw/sysbus.h"
 
 #define TYPE_XLNX_ZYNQMP_RTC "xlnx-zynmp.rtc"
 
@@ -84,3 +88,5 @@ typedef struct XlnxZynqMPRTC {
     uint32_t regs[XLNX_ZYNQMP_RTC_R_MAX];
     RegisterInfo regs_info[XLNX_ZYNQMP_RTC_R_MAX];
 } XlnxZynqMPRTC;
+
+#endif

@@ -16,16 +16,21 @@
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
+
 #include "qemu/osdep.h"
-#include "hw/hw.h"
 #include "sysemu/dma.h"
 #include "qapi/error.h"
+#include "qapi/qapi-types-block.h"
 #include "qemu/error-report.h"
+#include "qemu/main-loop.h"
+#include "qemu/module.h"
 #include "hw/ide/internal.h"
+#include "hw/qdev-properties.h"
 #include "sysemu/block-backend.h"
 #include "sysemu/blockdev.h"
 #include "hw/block/block.h"
 #include "sysemu/sysemu.h"
+#include "sysemu/runstate.h"
 #include "qapi/visitor.h"
 
 /* --------------------------------- */
@@ -168,7 +173,7 @@ static void ide_dev_initfn(IDEDevice *dev, IDEDriveKind kind, Error **errp)
             return;
         } else {
             /* Anonymous BlockBackend for an empty drive */
-            dev->conf.blk = blk_new(0, BLK_PERM_ALL);
+            dev->conf.blk = blk_new(qemu_get_aio_context(), 0, BLK_PERM_ALL);
             ret = blk_attach_dev(dev->conf.blk, &dev->qdev);
             assert(ret == 0);
         }

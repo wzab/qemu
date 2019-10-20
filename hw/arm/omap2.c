@@ -21,12 +21,15 @@
 #include "qemu/osdep.h"
 #include "qemu/error-report.h"
 #include "qapi/error.h"
-#include "qemu-common.h"
 #include "cpu.h"
+#include "sysemu/blockdev.h"
 #include "sysemu/qtest.h"
+#include "sysemu/reset.h"
+#include "sysemu/runstate.h"
 #include "hw/boards.h"
-#include "hw/hw.h"
-#include "hw/arm/arm.h"
+#include "hw/irq.h"
+#include "hw/qdev-properties.h"
+#include "hw/arm/boot.h"
 #include "hw/arm/omap.h"
 #include "sysemu/sysemu.h"
 #include "qemu/timer.h"
@@ -273,7 +276,7 @@ static void omap_eac_format_update(struct omap_eac_s *s)
      * does I2S specify it?  */
     /* All register writes are 16 bits so we we store 16-bit samples
      * in the buffers regardless of AGCFR[B8_16] value.  */
-    fmt.fmt = AUD_FMT_U16;
+    fmt.fmt = AUDIO_FORMAT_U16;
 
     s->codec.in_voice = AUD_open_in(&s->codec.card, s->codec.in_voice,
                     "eac.codec.in", s, omap_eac_in_cb, &fmt);
@@ -799,7 +802,7 @@ static struct omap_sti_s *omap_sti_init(struct omap_target_agent_s *ta,
     s->irq = irq;
     omap_sti_reset(s);
 
-    qemu_chr_fe_init(&s->chr, chr ?: qemu_chr_new("null", "null"),
+    qemu_chr_fe_init(&s->chr, chr ?: qemu_chr_new("null", "null", NULL),
                      &error_abort);
 
     memory_region_init_io(&s->iomem, NULL, &omap_sti_ops, s, "omap.sti",
