@@ -1703,6 +1703,10 @@ gcc_flags="-Wendif-labels -Wno-shift-negative-value $gcc_flags"
 gcc_flags="-Wno-initializer-overrides -Wexpansion-to-defined $gcc_flags"
 gcc_flags="-Wno-string-plus-int $gcc_flags"
 gcc_flags="-Wno-error=address-of-packed-member $gcc_flags"
+gcc_flags="-Wno-error=stringop-truncation $gcc_flags"
+gcc_flags="-Wno-error=deprecated-declarations $gcc_flags"
+gcc_flags="-Wno-error=format-truncation $gcc_flags"
+
 # Note that we do not add -Werror to gcc_flags here, because that would
 # enable it for all configure tests. If a configure test failed due
 # to -Werror this would just silently disable some features,
