@@ -36,6 +36,9 @@ config EDU
     default y if TEST_DEVICES
     depends on PCI && MSI_NONBROKEN
 
+config WZAB
+    bool
+
 config PCA9552
     bool
     depends on I2C
