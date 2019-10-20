@@ -88,6 +88,7 @@ enum {
     VE_USB,
     VE_DAPROM,
     VE_VIRTIO,
+    VE_WZENC1,
 };
 
 static hwaddr motherboard_legacy_map[] = {
@@ -100,6 +101,7 @@ static hwaddr motherboard_legacy_map[] = {
     [VE_MMCI] = 0x10005000,
     [VE_KMI0] = 0x10006000,
     [VE_KMI1] = 0x10007000,
+    [VE_WZENC1] = 0x10008000, //Added by WZab!
     [VE_UART0] = 0x10009000,
     [VE_UART1] = 0x1000a000,
     [VE_UART2] = 0x1000b000,
@@ -150,6 +152,7 @@ static hwaddr motherboard_aseries_map[] = {
     [VE_UART1] = 0x1c0a0000,
     [VE_UART2] = 0x1c0b0000,
     [VE_UART3] = 0x1c0c0000,
+    [VE_WZENC1] = 0x1c0d0000,
     [VE_WDT] = 0x1c0f0000,
     [VE_TIMER01] = 0x1c110000,
     [VE_TIMER23] = 0x1c120000,
@@ -640,10 +643,12 @@ static void vexpress_common_init(MachineState *machine)
     pl011_create(map[VE_UART0], pic[5], serial_hd(0));
     pl011_create(map[VE_UART1], pic[6], serial_hd(1));
     pl011_create(map[VE_UART2], pic[7], serial_hd(2));
-    pl011_create(map[VE_UART3], pic[8], serial_hd(3));
+    //pl011_create(map[VE_UART3], pic[8], serial_hd(3));
 
     sysbus_create_simple("sp804", map[VE_TIMER01], pic[2]);
     sysbus_create_simple("sp804", map[VE_TIMER23], pic[3]);
+    /* Simple BM DMA Crypto engine - model by WZab we take over interrupt from UART3 */
+    sysbus_create_simple("sysbus-wzenc1", map[VE_WZENC1], pic[8]);
 
     dev = sysbus_create_simple("versatile_i2c", map[VE_SERIALDVI], NULL);
     i2c = (I2CBus *)qdev_get_child_bus(dev, "i2c");
