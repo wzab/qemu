@@ -255,8 +255,9 @@ static void wztim1_on_reset (void *opaque)
     wztim1_reset (s);
 }
 
-static int sysbus_wztim1_init (SysBusDevice *sbd)
+static void sysbus_wztim1_init (Object *obj)
 {
+    SysBusDevice * sbd = SYS_BUS_DEVICE(obj);
     DeviceState *dev = DEVICE(sbd);
     WzTim1State *s = WZTIM1(dev);
     /* TODO: RST# value should be 0. */
@@ -267,7 +268,7 @@ static int sysbus_wztim1_init (SysBusDevice *sbd)
     qemu_register_reset (wztim1_on_reset, s);
     s->timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, wzab1_tick, s);
     wztim1_reset (s);
-    return 0;
+    //return 0;
 }
 
 /*
@@ -289,9 +290,9 @@ static void sysbus_wztim1_reset(DeviceState *dev)
 static void sysbus_wztim1_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
-    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+    //SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
 
-    k->init = sysbus_wztim1_init;
+    //k->init = sysbus_wztim1_init;
     //k->exit = sysbus_wztim1_uninit;
     dc->desc = "SYSBUS demo TIMER";
     dc->reset = sysbus_wztim1_reset;
@@ -302,6 +303,7 @@ static const TypeInfo sysbus_wztim1_info = {
     .name          = TYPE_SYSBUS_WZTIM1,
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(WzTim1State),
+    .instance_init = sysbus_wztim1_init,
     .class_init    = sysbus_wztim1_class_init,
 };
 
