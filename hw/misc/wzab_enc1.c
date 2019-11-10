@@ -306,7 +306,7 @@ static void wzab1_tick(void *opaque)
 
 //Sorry, but the state description below is not complete!
 //You are free to fix it!
-static const VMStateDescription vmstate_wz_enc1 = {
+/* static const VMStateDescription vmstate_wz_enc1 = {
   .name = "wz_enc1",
   .version_id = 2,
   .minimum_version_id = 2,
@@ -317,7 +317,7 @@ static const VMStateDescription vmstate_wz_enc1 = {
     VMSTATE_END_OF_LIST()
   }
 };
-
+*/
 /*
 static void wz_enc1_on_reset (void *opaque)
 {
@@ -326,9 +326,9 @@ static void wz_enc1_on_reset (void *opaque)
 }
 */
 
-static int pci_wz_enc1_init (PCIDevice *dev)
+static void pci_wzenc1_realize (PCIDevice *pdev, Error **errp)
 {
-  WzEnc1State *s = PCI_WZENC1(dev);
+  WzEnc1State *s = PCI_WZENC1(pdev);
   uint8_t *c = s->parent_obj.config;
   //Set values in the configuration space
   //@@ Functions below should be called via do_pci_register_device,
@@ -349,9 +349,12 @@ static int pci_wz_enc1_init (PCIDevice *dev)
   //Register timer used to simulate processing time
   s->timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, wzab1_tick, s);
   wz_enc1_reset (s);
-  return 0;
+  //return 0;
 }
 
+static void pci_wz_enc1_init(Object *obj)
+{
+}
 static void
 pci_wzenc1_uninit(PCIDevice *dev)
 {
@@ -371,8 +374,7 @@ static void pci_wzenc1_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
-
-    k->init = pci_wz_enc1_init;
+    k->realize = pci_wzenc1_realize;
     k->exit = pci_wzenc1_uninit;
     k->vendor_id = PCI_VENDOR_ID_WZAB;
     k->device_id = PCI_DEVICE_ID_WZAB_WZENC1;
@@ -383,15 +385,20 @@ static void pci_wzenc1_class_init(ObjectClass *klass, void *data)
     dc->reset = qdev_pci_wzenc1_reset;
 }
 
-static const TypeInfo pci_wzenc1_info = {
-    .name          = TYPE_PCI_WZENC1,
-    .parent        = TYPE_PCI_DEVICE,
-    .instance_size = sizeof(WzEnc1State),
-    .class_init    = pci_wzenc1_class_init,
-};
-
 static void pci_wzenc1_register_types(void)
 {
+    static InterfaceInfo interfaces[] = {
+        { INTERFACE_CONVENTIONAL_PCI_DEVICE },
+        { },
+    };
+    static const TypeInfo pci_wzenc1_info = {
+    	.name          = TYPE_PCI_WZENC1,
+    	.parent        = TYPE_PCI_DEVICE,
+    	.instance_size = sizeof(WzEnc1State),
+    	.instance_init = pci_wz_enc1_init,
+    	.class_init    = pci_wzenc1_class_init,
+        .interfaces = interfaces,
+};
     type_register_static(&pci_wzenc1_info);
 }
 

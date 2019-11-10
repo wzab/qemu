@@ -247,6 +247,8 @@ static void wzab1_tick(void *opaque)
 #endif
   pci_irq_assert(&s->parent_obj);
 }
+
+/*
 static const VMStateDescription vmstate_wz_adc1 = {
   .name = "wz_adc1",
   .version_id = 2,
@@ -259,6 +261,7 @@ static const VMStateDescription vmstate_wz_adc1 = {
     VMSTATE_END_OF_LIST()
   }
 };
+*/
 
 static void wz_adc1_on_reset (void *opaque)
 {
@@ -266,9 +269,9 @@ static void wz_adc1_on_reset (void *opaque)
   wz_adc1_reset (s);
 }
 
-static int pci_wz_adc1_init (PCIDevice *dev)
+static void pci_wzadc1_realize (PCIDevice *pdev, Error **errp)
 {
-  WzAdc1State *s = PCI_WZADC1(dev);
+  WzAdc1State *s = PCI_WZADC1(pdev);
   uint8_t *c = s->parent_obj.config;
 
   /* TODO: RST# value should be 0. */
@@ -280,9 +283,13 @@ static int pci_wz_adc1_init (PCIDevice *dev)
   s->timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, wzab1_tick, s);
   //AUD_register_card ("wz_adc1", &s->card);
   wz_adc1_reset (s);
-  return 0;
+  //return 0;
 }
 
+static void pci_wz_adc1_init(Object *obj)
+{
+}
+ 
 static void
 pci_wz_adc1_uninit(PCIDevice *dev)
 {
@@ -297,12 +304,12 @@ static void qdev_pci_wz_adc1_reset(DeviceState *dev)
     wz_adc1_reset(d);
 }
 
-static void pci_wzadc1_class_init(ObjectClass *klass, void *data)
+static void pci_wzadc1_class_init(ObjectClass *class, void *data)
 {
-    DeviceClass *dc = DEVICE_CLASS(klass);
-    PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
+    DeviceClass *dc = DEVICE_CLASS(class);
+    PCIDeviceClass *k = PCI_DEVICE_CLASS(class);
 
-    k->init = pci_wz_adc1_init;
+    k->realize = pci_wzadc1_realize,
     k->exit = pci_wz_adc1_uninit;
     k->vendor_id = PCI_VENDOR_ID_WZAB;
     k->device_id = PCI_DEVICE_ID_WZAB_WZADC1;
@@ -313,15 +320,22 @@ static void pci_wzadc1_class_init(ObjectClass *klass, void *data)
     dc->reset = qdev_pci_wz_adc1_reset;
 }
 
-static const TypeInfo pci_wz_adc1_info = {
-    .name          = TYPE_PCI_WZADC1,
-    .parent        = TYPE_PCI_DEVICE,
-    .instance_size = sizeof(WzAdc1State),
-    .class_init    = pci_wzadc1_class_init,
-};
 
 static void pci_wzadc1_register_types(void)
 {
+    static InterfaceInfo interfaces[] = {
+        { INTERFACE_CONVENTIONAL_PCI_DEVICE },
+        { },
+    };
+    static const TypeInfo pci_wz_adc1_info = {
+    	.name          = TYPE_PCI_WZADC1,
+    	.parent        = TYPE_PCI_DEVICE,
+    	.instance_size = sizeof(WzAdc1State),
+    	.instance_init = pci_wz_adc1_init,
+    	.class_init    = pci_wzadc1_class_init,
+        .interfaces = interfaces,
+	};
+    
     type_register_static(&pci_wz_adc1_info);
 }
 
