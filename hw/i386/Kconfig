@@ -11,6 +11,7 @@ config PC
     imply ISA_DEBUG
     imply PARALLEL
     imply PCI_DEVICES
+    imply WZAB_PCI
     imply PVPANIC
     imply QXL
     imply SEV
