@@ -303,42 +303,11 @@ static void wzab1_tick(void *opaque)
   if(s->irq_mask==0) pci_irq_assert(&(s->parent_obj));
 }
 
-
-//Sorry, but the state description below is not complete!
-//You are free to fix it!
-/* static const VMStateDescription vmstate_wz_enc1 = {
-  .name = "wz_enc1",
-  .version_id = 2,
-  .minimum_version_id = 2,
-  .minimum_version_id_old = 2,
-  .fields      = (VMStateField []) {
-    VMSTATE_PCI_DEVICE(parent_obj, WzEnc1State),
-    VMSTATE_TIMER_PTR(timer,WzEnc1State),
-    VMSTATE_END_OF_LIST()
-  }
-};
-*/
-/*
-static void wz_enc1_on_reset (void *opaque)
-{
-  WzEnc1State *s = PCI_WZENC1(opaque);
-  wz_enc1_reset (s);
-}
-*/
-
 static void pci_wzenc1_realize (PCIDevice *pdev, Error **errp)
 {
   WzEnc1State *s = PCI_WZENC1(pdev);
   uint8_t *c = s->parent_obj.config;
-  //Set values in the configuration space
-  //@@ Functions below should be called via do_pci_register_device,
-  //which in turn is called from pci_qdev_init, 
-  //system calls it via pci_device_class_init.
-  //so all PCI specific info should be passed via class structure!
-  //pci_config_set_vendor_id (c, PCI_VENDOR_ID_WZAB);
-  //pci_config_set_device_id (c, PCI_DEVICE_ID_WZAB_WZENC1);
-  //pci_config_set_class (c, PCI_CLASS_OTHERS);
-
+  
   /* TODO: RST# value should be 0. */
   c[PCI_INTERRUPT_PIN] = 1;
   //Register memory mapped registers

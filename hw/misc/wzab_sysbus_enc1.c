@@ -22,7 +22,7 @@
  * THE SOFTWARE.
  */
 
-#define DEBUG_wzab1 1 
+#define DEBUG_wzab1 1
 
 //Simulated processing time
 #define ENC1_PROCESSING_TIME 5000000
@@ -30,6 +30,7 @@
 #include "qemu/osdep.h"
 #include <string.h>
 #include "qemu/compiler.h"
+#include "sysemu/dma.h"
 #include "hw/sysbus.h"
 #include "hw/hw.h"
 #include <mcrypt.h>
@@ -42,11 +43,11 @@
   It is a sysbus connected (platform) device with memory mapped registers.
   Register definitions are provided in "wzab_enc1.h" file
   The data transfer is fulfilled using bus-mastering DMA
-  
+
   Registers (all 32-bit):
   Ctrl - offset 0
   Status - offset 1
-  Pages[4] - starting from offset 2 
+  Pages[4] - starting from offset 2
        4 sets of registers describing pages used to transfer data
        each set contains:
        PhysAddr register - physical address of the begining of the page
@@ -66,7 +67,7 @@
   2) Processing of data
      a) Data should be stored in buffers located on up to 4 pages, described
         by registers PhysAddr, Offset, Length in Pages register sets.
-     b) Processing ends either after 4 pages are processed or after first 
+     b) Processing ends either after 4 pages are processed or after first
         page with Length set to 0 is found.
      c) When data are written to buffers and Pages registers are set, write
         the ENC1_CMD_DATA command to Ctrl
@@ -96,29 +97,29 @@ static void wz_enc1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size
 int wz_enc1_init (SysBusDevice *sbd);
 
 typedef struct WzEnc1State {
-  /*<private>*/
-  SysBusDevice parent_obj;
-  /*<public>*/
-  MemoryRegion iomem;
-  union {
-    WzEnc1Regs r;
-    uint32_t u32[sizeof(WzEnc1Regs)/sizeof(uint32_t)];
-  } regs;
-  uint32_t wz_enc1_io_addr;
-  uint32_t irq_pending;
-  uint32_t irq_mask;
-  uint8_t Error;
-  uint8_t Working;
-  MCRYPT td;
-  uint8_t enc_ndec;
-  QEMUTimer * timer;
-  qemu_irq irq;
+    /*<private>*/
+    SysBusDevice parent_obj;
+    /*<public>*/
+    MemoryRegion iomem;
+    union {
+        WzEnc1Regs r;
+        uint32_t u32[sizeof(WzEnc1Regs)/sizeof(uint32_t)];
+    } regs;
+    uint32_t wz_enc1_io_addr;
+    uint32_t irq_pending;
+    uint32_t irq_mask;
+    uint8_t Error;
+    uint8_t Working;
+    MCRYPT td;
+    uint8_t enc_ndec;
+    QEMUTimer * timer;
+    qemu_irq irq;
 } WzEnc1State;
 
 #define TYPE_SYSBUS_WZENC1 "sysbus-wzenc1"
- 
+
 #define WZENC1(obj) \
-OBJECT_CHECK(WzEnc1State, (obj), TYPE_SYSBUS_WZENC1) 
+OBJECT_CHECK(WzEnc1State, (obj), TYPE_SYSBUS_WZENC1)
 static const MemoryRegionOps wz_enc1_iomem_ops = {
     .read = wz_enc1_read,
     .write = wz_enc1_write,
@@ -132,39 +133,39 @@ static const MemoryRegionOps wz_enc1_iomem_ops = {
 
 static void wz_enc1_reset (void * opaque)
 {
-  WzEnc1State *s = opaque;
-  memset((void *)s->regs.u32,0,sizeof(s->regs.u32));
+    WzEnc1State *s = opaque;
+    memset((void *)s->regs.u32,0,sizeof(s->regs.u32));
 #ifdef DEBUG_wzab1
-  printf("wzab_tst1 reset!\n");
+    printf("wzab_tst1 reset!\n");
 #endif
 }
 
 /* called for read accesses to our register memory area */
 static uint64_t wz_enc1_read(void *opaque, hwaddr addr, unsigned size)
 {
-  int i_addr;
+    int i_addr;
 #ifdef DEBUG_wzab1
-  printf("Memory read: address %x\n ", (unsigned int) addr);
+    printf("Memory read: address %x\n ", (unsigned int) addr);
 #endif
-  WzEnc1State *s = opaque;
-  if(addr>=sizeof(WzEnc1Regs)){
-    //Read above registers area - return "0xbada4ea" to show it
-    return 0xbada4ea;
-  } else if (addr == offsetof(WzEnc1Regs, Status)) {
-    //Reading of the Status - synthesize the correct value
-    uint32_t res = s->Error & 0xffff ; //Lower 16 bits!
-    if (s->Working) res |= 0x1000;
-    if (s->irq_pending) res |= 0x8000;
-    if (s->irq_mask) res |= 0x4000;
+    WzEnc1State *s = opaque;
+    if(addr>=sizeof(WzEnc1Regs)) {
+        //Read above registers area - return "0xbada4ea" to show it
+        return 0xbada4ea;
+    } else if (addr == offsetof(WzEnc1Regs, Status)) {
+        //Reading of the Status - synthesize the correct value
+        uint32_t res = s->Error & 0xffff ; //Lower 16 bits!
+        if (s->Working) res |= 0x1000;
+        if (s->irq_pending) res |= 0x8000;
+        if (s->irq_mask) res |= 0x4000;
 #ifdef DEBUG_wzab1
-    printf("Status=%d\n",res);
+        printf("Status=%d\n",res);
 #endif
-    return res;
-  }else {
-    i_addr = addr/4;
-    //Read the register
-    return s->regs.u32[i_addr];
-  }
+        return res;
+    } else {
+        i_addr = addr/4;
+        //Read the register
+        return s->regs.u32[i_addr];
+    }
 }
 
 static char cipher[] = "rijndael-256";
@@ -174,143 +175,144 @@ static char cipher_mode[] = "cbc";
 
 static void wz_enc1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
-  WzEnc1State *s = opaque;
-  int i_addr;
-#ifdef DEBUG_wzab1  
-  printf("wzab1: zapis pod adres = 0x%016" PRIu64 " , 0x%016" PRIu64 "\n", (uint64_t) addr, val);
+    WzEnc1State *s = opaque;
+    int i_addr;
+#ifdef DEBUG_wzab1
+    printf("wzab1: zapis pod adres = 0x%016" PRIu64 " , 0x%016" PRIu64 "\n", (uint64_t) addr, val);
 #endif
-  /* Check which register is accessed */
-  if(addr>=sizeof(WzEnc1Regs)){
-    //Write above registers area - ignore it!
-  } else {
-    i_addr = addr/4;
-    //Write the value
-    s->regs.u32[i_addr]=val;
-    //Interprete its special meaning
-    if (addr==offsetof(WzEnc1Regs,Ctrl)) {
-      //Write to control register - we need to check what operation is required
-      switch(val) {
-      case ENC1_CMD_DECR:
-      case ENC1_CMD_ENCR: {
-	//required initialization of the encryption engine
-	//key and IV provided
-	uint8_t key[32];
-	uint8_t iv[32];
-	s->td = mcrypt_module_open(cipher, NULL, cipher_mode, NULL);
-	if(s->td == NULL) {
-	  printf("Initialization A of mcrypt impossible!\n");
-	  exit(1);
-	}
-	if (val==ENC1_CMD_ENCR) {
-	  s->enc_ndec = 1; //We will encrypt data
-	} else {
-	  s->enc_ndec = 0; //We will decrypt data
-	}
-        cpu_physical_memory_read(s->regs.r.Pages[0].PhysAddr,key,32);
-        cpu_physical_memory_read(s->regs.r.Pages[1].PhysAddr,iv,32);
-	if(mcrypt_generic_init(s->td,(void*)key,32,(void*)iv)<0){
-	  printf("Initialization B of mcrypt impossible!\n");
-	  exit(1);
-	}
-        break;
-      }
-      case ENC1_CMD_DATA:
-	//next set of data provided, no reinitialization of encryption engine
-	if(s->td == NULL) {
-	  //Error - hardware not initialized
-	  s->Error = ENC1_ERR_NOTINIT; //Error hardware not initialized
-	  s->irq_pending = 1;
-	  if(s->irq_mask==0) qemu_irq_raise(s->irq);
-	} else if(s->Working) {
-	  //Error - engine is still busy!
-	  s->Error = ENC1_ERR_BUSY; //Error!
-	  s->irq_pending = 1;
-	  if(s->irq_mask==0) qemu_irq_lower(s->irq);
-	} else {
-	  //Normal operation - submit data to processing
-	  s->Working = 0x1;
-	  timer_mod(s->timer,qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)+ENC1_PROCESSING_TIME);
-	}
-	break;
-      case ENC1_CMD_STOP:
-	//End of encryption!
-	mcrypt_generic_deinit(s->td);
-	mcrypt_module_close(s->td);
-	s->td = NULL;
-	s->irq_pending = 0;
-	s->irq_mask = 0;
-	qemu_irq_lower(s->irq);
-	break;
-      case ENC1_CMD_ACKIRQ:
-	//Confirm reception of interrupt (and unmask it)
-	s->irq_pending = 0;
-	s->irq_mask = 0;
-	qemu_irq_lower(s->irq);
-	break;
-      case ENC1_CMD_DISIRQ:
-	//Mask interrupt
-	s->irq_mask = 1;
-	qemu_irq_lower(s->irq);
-	break;
-      case ENC1_CMD_ENAIRQ:
-	//Unmask interrupt
-	s->irq_mask = 0;
-	if(s->irq_pending) qemu_irq_raise(s->irq);
-	break;
-      }
+    /* Check which register is accessed */
+    if(addr>=sizeof(WzEnc1Regs)) {
+        //Write above registers area - ignore it!
+    } else {
+        i_addr = addr/4;
+        //Write the value
+        s->regs.u32[i_addr]=val;
+        //Interprete its special meaning
+        if (addr==offsetof(WzEnc1Regs,Ctrl)) {
+            //Write to control register - we need to check what operation is required
+            switch(val) {
+            case ENC1_CMD_DECR:
+            case ENC1_CMD_ENCR: {
+                //required initialization of the encryption engine
+                //key and IV provided
+                uint8_t key[32];
+                uint8_t iv[32];
+                s->td = mcrypt_module_open(cipher, NULL, cipher_mode, NULL);
+                if(s->td == NULL) {
+                    printf("Initialization A of mcrypt impossible!\n");
+                    exit(1);
+                }
+                if (val==ENC1_CMD_ENCR) {
+                    s->enc_ndec = 1; //We will encrypt data
+                } else {
+                    s->enc_ndec = 0; //We will decrypt data
+                }
+                dma_memory_read(&address_space_memory,s->regs.r.Pages[0].PhysAddr,key,32);
+                dma_memory_read(&address_space_memory,s->regs.r.Pages[1].PhysAddr,iv,32);
+                if(mcrypt_generic_init(s->td,(void*)key,32,(void*)iv)<0) {
+                    printf("Initialization B of mcrypt impossible!\n");
+                    exit(1);
+                }
+                break;
+            }
+            case ENC1_CMD_DATA:
+                //next set of data provided, no reinitialization of encryption engine
+                if(s->td == NULL) {
+                    //Error - hardware not initialized
+                    s->Error = ENC1_ERR_NOTINIT; //Error hardware not initialized
+                    s->irq_pending = 1;
+                    if(s->irq_mask==0) qemu_irq_raise(s->irq);
+                } else if(s->Working) {
+                    //Error - engine is still busy!
+                    s->Error = ENC1_ERR_BUSY; //Error!
+                    s->irq_pending = 1;
+                    if(s->irq_mask==0) qemu_irq_lower(s->irq);
+                } else {
+                    //Normal operation - submit data to processing
+                    s->Working = 0x1;
+                    timer_mod_anticipate(s->timer,qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)+ENC1_PROCESSING_TIME);
+                }
+                break;
+            case ENC1_CMD_STOP:
+                //End of encryption!
+                mcrypt_generic_deinit(s->td);
+                mcrypt_module_close(s->td);
+                s->td = NULL;
+                s->irq_pending = 0;
+                s->irq_mask = 0;
+                qemu_irq_lower(s->irq);
+                break;
+            case ENC1_CMD_ACKIRQ:
+                //Confirm reception of interrupt (and unmask it)
+                s->irq_pending = 0;
+                s->irq_mask = 0;
+                qemu_irq_lower(s->irq);
+                break;
+            case ENC1_CMD_DISIRQ:
+                //Mask interrupt
+                s->irq_mask = 1;
+                qemu_irq_lower(s->irq);
+                break;
+            case ENC1_CMD_ENAIRQ:
+                //Unmask interrupt
+                s->irq_mask = 0;
+                if(s->irq_pending) qemu_irq_raise(s->irq);
+                break;
+            }
+        }
     }
-  }
 }
 
 /* The procedure below performs the real encryption, after simulated processing time is expired */
 static void wzab1_tick(void *opaque)
-{ 
-  WzEnc1State * s = opaque;
-  //Encrypt the data
-  {
-    uint8_t block[32];
-    int p;
-    for(p=0;p<WZENC1_NOF_PAGES;p++) {
-      //Loop through all pages
-      int i;
-      int j = s->regs.r.Pages[p].PhysAddr + s->regs.r.Pages[p].Offset;
-      int len = s->regs.r.Pages[p].Length ;
-      if(!len) break; //Page with Length=0 is found
-      for(i=0; i<len ; i+=32) {
-	//Read data from page to processing buffer
-	cpu_physical_memory_read(j+i,block,32);
-	if (s->enc_ndec) {
-	  //Encrypt data
-	  mcrypt_generic (s->td, block, 32);
-	} else {
-	  //Decrypt data
-	  mdecrypt_generic (s->td, block, 32); 
-	}
-	//Write processed data back
-	cpu_physical_memory_write(j+i,block,32);
-      }
+{
+    WzEnc1State * s = opaque;
+    //Encrypt the data
+    {
+        uint8_t block[32];
+        int p;
+        for(p=0; p<WZENC1_NOF_PAGES; p++) {
+            //Loop through all pages
+            int i;
+            int j = s->regs.r.Pages[p].PhysAddr + s->regs.r.Pages[p].Offset;
+            int len = s->regs.r.Pages[p].Length ;
+            if(!len) break; //Page with Length=0 is found
+            for(i=0; i<len ; i+=32) {
+                //Read data from page to processing buffer
+                dma_memory_read(&address_space_memory,j+i,block,32);
+                if (s->enc_ndec) {
+                    //Encrypt data
+                    mcrypt_generic (s->td, block, 32);
+                } else {
+                    //Decrypt data
+                    mdecrypt_generic (s->td, block, 32);
+                }
+                //Write processed data back
+                dma_memory_write(&address_space_memory,j+i,block,32);
+            }
+        }
     }
-  }
 #ifdef DEBUG_wzab1
-  printf("Data processed - request IRQ!\n");
+    printf("Data processed - request IRQ!\n");
 #endif
-  s->Working = 0;
-  s->irq_pending = 1;
-  if(s->irq_mask==0) qemu_irq_raise(s->irq);
+    s->Working = 0;
+    s->irq_pending = 1;
+    if(s->irq_mask==0) qemu_irq_raise(s->irq);
 }
 
 
 //Sorry, but the state description below is not complete!
 //You are free to fix it!
 static const VMStateDescription vmstate_wz_enc1 = {
-  .name = "wz_enc1",
-  .version_id = 2,
-  .minimum_version_id = 2,
-  .minimum_version_id_old = 2,
-  .fields      = (VMStateField []) {
-    VMSTATE_TIMER_PTR(timer,WzEnc1State),
-    VMSTATE_END_OF_LIST()
-  }
+    .name = "wz_enc1",
+    .version_id = 2,
+    .minimum_version_id = 2,
+    .minimum_version_id_old = 2,
+    .fields      = (VMStateField [])
+    {
+        VMSTATE_TIMER_PTR(timer,WzEnc1State),
+        VMSTATE_END_OF_LIST()
+    }
 };
 
 /*
@@ -323,19 +325,19 @@ static void wz_enc1_on_reset (void *opaque)
 
 static void sysbus_wzenc1_init (Object * obj)
 {
-  SysBusDevice * sbd = SYS_BUS_DEVICE(obj);
-  DeviceState *dev = DEVICE(sbd);
-  WzEnc1State *s = WZENC1(dev);
-  //Register memory mapped registers
-  memory_region_init_io(&s->iomem,OBJECT(s),&wz_enc1_iomem_ops,s,
-                        "sysbus-wzenc1-iomem", 0x100); //@@sizeof(s->regs.u32));
-  sysbus_init_mmio(sbd, &s->iomem);
-  sysbus_init_irq(sbd, &s->irq);
-  qemu_register_reset (wz_enc1_reset, s);
-  //Register timer used to simulate processing time
-  s->timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, wzab1_tick, s);
-  wz_enc1_reset (s);
-  //return 0;
+    SysBusDevice * sbd = SYS_BUS_DEVICE(obj);
+    DeviceState *dev = DEVICE(sbd);
+    WzEnc1State *s = WZENC1(dev);
+    //Register memory mapped registers
+    memory_region_init_io(&s->iomem,OBJECT(s),&wz_enc1_iomem_ops,s,
+                          "sysbus-wzenc1-iomem", 0x100); //@@sizeof(s->regs.u32));
+    sysbus_init_mmio(sbd, &s->iomem);
+    sysbus_init_irq(sbd, &s->irq);
+    qemu_register_reset (wz_enc1_reset, s);
+    //Register timer used to simulate processing time
+    s->timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, wzab1_tick, s);
+    wz_enc1_reset (s);
+    //return 0;
 }
 
 /*
