@@ -76,6 +76,7 @@ obj-$(CONFIG_PVPANIC) += pvpanic.o
 
 obj-$(CONFIG_WZAB_PCI) += wzab_enc1.o
 obj-$(CONFIG_WZAB_PCI) += wzab_adc1.o
+obj-$(CONFIG_WZAB_PCI) += wzab_tim1.o
 obj-$(CONFIG_WZAB) += wzab_sysbus_enc1.o
 obj-$(CONFIG_WZAB) += wzab_sysbus_adc1.o
 obj-$(CONFIG_WZAB) += wzab_sysbus_tim1.o
