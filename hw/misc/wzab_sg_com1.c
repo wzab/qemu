@@ -4,6 +4,14 @@
  * QEMU - Model of the device providing the trivial communication, using the 
  * scatter-gather BM DMA.
  * 
+ * When the DMA transfer is started, the model creates a new file,
+ * and puts all received data into it.
+ * 
+ * How to create a file with the next number?
+ * In the first approach we simply use the current directory.
+ * We create files with numbers starting from 0 (so we will overwrite
+ * files created in the previous session if any).
+ * 
  * Copyright Wojciech M. Zabolotny ( wzab@ise.pw.edu.pl ) 2011-2019
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -236,6 +244,9 @@ static void pci_wz_enc1_write(void *opaque, hwaddr addr, uint64_t val, unsigned 
     }
   }
 }
+
+/* New procedures developed for WZCOM1 */
+
 
 /* The procedure below performs the real encryption, after simulated processing time is expired */
 static void wzab1_tick(void *opaque)
