@@ -281,7 +281,7 @@ static void pci_wz_com1_realize (PCIDevice *pdev, Error **errp)
     //Register memory mapped registers
     memory_region_init_io(&s->mmio,OBJECT(s),&pci_wz_com1_mmio_ops,s,
                           "pci-wzcom1-mmio", 0x100); //@@sizeof(s->regs.u32));
-    pci_register_bar (&s->parent_obj, 0,  PCI_BASE_ADDRESS_SPACE_MEMORY,&s->mmio);
+    pci_register_bar (&s->parent_obj, 0,  PCI_BASE_ADDRESS_SPACE_MEMORY | PCI_BASE_ADDRESS_MEM_TYPE_64 ,&s->mmio);
     qemu_register_reset (wz_com1_reset, s);
     //Register timer used to simulate processing time
     s->timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, wz_com1_do_dma, s);
