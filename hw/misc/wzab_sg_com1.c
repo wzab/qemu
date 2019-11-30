@@ -185,9 +185,9 @@ static void wz_com1_do_dma(void *opaque)
         //Here we start processing of the current descriptor
         com1_addr_t n_entries, next;
         //Read the number of entries
-        pci_dma_read(&s->parent_obj,s->regs.r.CurDesc+offsetof(Com1Desc, Length), &next, sizeof(com1_addr_t));
+        pci_dma_read(&s->parent_obj,s->regs.r.CurDesc+offsetof(Com1Desc, Length), &n_entries, sizeof(com1_addr_t));
         //Read the address of the next descriptor
-        pci_dma_read(&s->parent_obj,s->regs.r.CurDesc+offsetof(Com1Desc, Next), &n_entries, sizeof(com1_addr_t));
+        pci_dma_read(&s->parent_obj,s->regs.r.CurDesc+offsetof(Com1Desc, Next), &next, sizeof(com1_addr_t));
         com1_addr_t bufs = s->regs.r.CurDesc+offsetof(Com1Desc, Descs);
         //Start processing of subsequent buffers in the descriptor
         for(int i=0; i<n_entries; i++)
