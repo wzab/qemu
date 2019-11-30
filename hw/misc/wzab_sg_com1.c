@@ -147,7 +147,7 @@ static uint64_t pci_wz_com1_read(void *opaque, hwaddr addr, unsigned size)
         if (s->irq_mask)
             res |= 0x4000;
 #ifdef DEBUG_wzab1
-        printf("Status=%d\n",res);
+        printf("Status=%016" PRIu64" \n",res);
 #endif
         return res;
     }
