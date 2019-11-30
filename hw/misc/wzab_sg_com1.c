@@ -139,7 +139,7 @@ static uint64_t pci_wz_com1_read(void *opaque, hwaddr addr, unsigned size)
     else if (addr == offsetof(WzCom1Regs, Status))
     {
         //Reading of the Status - synthesize the correct value
-        uint32_t res = s->Error & 0xffff ; //Lower 16 bits!
+        com1_addr_t res = s->Error & 0xffff ; //Lower 16 bits!
         if (s->Working)
             res |= 0x1000;
         if (s->irq_pending)
@@ -150,6 +150,9 @@ static uint64_t pci_wz_com1_read(void *opaque, hwaddr addr, unsigned size)
         printf("Status=%d\n",res);
 #endif
         return res;
+    }
+    else if (addr == offsetof(WzCom1Regs, Id)) {
+        return 0x32abd3a1;
     }
     else
     {
