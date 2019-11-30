@@ -111,6 +111,10 @@ static const MemoryRegionOps pci_wz_com1_mmio_ops =
         .min_access_size = 8, //Always 32-bit access!!
         .max_access_size = 8,
     },
+    .valid = {
+        .min_access_size = 8, //Always 32-bit access!!
+        .max_access_size = 8,
+    },
 };
 
 
