@@ -6,6 +6,7 @@ config ARM_VIRT
     imply VFIO_PLATFORM
     imply VFIO_XGMAC
     imply TPM_TIS_SYSBUS
+    imply WZAB_PCI
     select A15MPCORE
     select ACPI
     select ARM_SMMUV3
