@@ -84,6 +84,7 @@ common-obj-$(CONFIG_ARMSSE_MHU) += armsse-mhu.o
 common-obj-$(CONFIG_PVPANIC) += pvpanic.o
 
 obj-$(CONFIG_WZAB_PCI) += wzab_adc1.o
+obj-$(CONFIG_WZAB_PCI) += wzab_daq1.o
 
 common-obj-$(CONFIG_AUX) += auxbus.o
 common-obj-$(CONFIG_ASPEED_SOC) += aspeed_xdma.o
