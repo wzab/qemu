@@ -263,11 +263,13 @@ static const VMStateDescription vmstate_wz_adc1 = {
 };
 */
 
+/*
 static void wz_adc1_on_reset (void *opaque)
 {
   WzAdc1State *s = opaque;
   wz_adc1_reset (s);
 }
+*/
 
 static void pci_wzadc1_realize (PCIDevice *pdev, Error **errp)
 {
@@ -279,7 +281,6 @@ static void pci_wzadc1_realize (PCIDevice *pdev, Error **errp)
   memory_region_init_io(&s->mmio,OBJECT(s),&pci_wz_adc1_mmio_ops,s,
                         "pci-wzadc1-mmio", 0x100); //@@sizeof(s->regs.u32));
   pci_register_bar (&s->parent_obj, 0,  PCI_BASE_ADDRESS_SPACE_MEMORY,&s->mmio);
-  qemu_register_reset (wz_adc1_on_reset, s);
   s->timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, wzab1_tick, s);
   //AUD_register_card ("wz_adc1", &s->card);
   wz_adc1_reset (s);
