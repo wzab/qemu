@@ -1,18 +1,45 @@
 /*
- * QEMU WZADC1 emulation
+ * Emulation of the FPGA-based DAQ engine for QEMU
  *
- * Copyright Wojciech M. Zabolotny ( wzab@ise.pw.edu.pl ) 2011-2014
+ * Copyright Wojciech M. Zabolotny ( wzab@ise.pw.edu.pl ) 2021
  *
- * The code below implements a simple Analog to Digital converter
- * for QEMU, which uses Bus Mastering DMA to transfer data to the PC.
- * The real device may be implemented in an FPGA connected to the 
- * system device, however this model is assumed to be used mainly
- * as a didicatical aid for students learning how to write and debug
- * Linux device drivers.
+ * The code below implements a DAQ DMA engine, that writes the data to the
+ * memory buffers, using the DMA.
+ * It is assumed, that the memory buffers are based on hugepages
+ * with size 2MB (maybe it should be parameterized?).
+ * The 64-bit base addresses of the hugepages are stored in the block
+ * memory in the FPGA. Here it is modeled as an "mem_bufs" array.
+ * (should they really be 64-bit? the lowest 21 bits are always zero!
+ * so we have only 43 bits. Is there any additional limit on the 
+ * upper bits?)
+ * 
+ * Except of this, we need a control register, that holds configuration
+ * information.
+ * o) Number of memory buffers
+ * o) Whether the acquisition is started or not
+ * Additionally we need a runtime information
+ * o) One huge pages stores a circular buffer for event descriptors - as 256 bit structures.
+ *      => we need a special register for that!
+ * o) Other huge pages are in a block memory - 2^N buffers
+ * o) We receive the data until we get "tlast". After that we have to store the event.
+ *    (how we can simulate that in QEMU?)
+ * 
+ * So what must be in the "runtime information"?
+ * o) Current write position - number of the HP page and offset in it.
+ * o) Start position of the current event
+ * o) Last unread position - number of the HP page and offset to it.
+ *
+ * Additionally we need a control ans status registers.
+ * o) In control register we only start the engine.
+ * o) In the status register we only stop it.
+ *
+ * The QEMU model must contain also the emulated data source and its configuration.
+ * Therefore there will be a few additional registers.
+ * 
+ * 
  * The code was written by Wojciech M. Zabolotny (wzab<at>ise.pw.edu.pl)
- * in March and April 2011, however it is significantly based on different
- * source codes provided
- * in the QEMU sources.
+ * in March and April 2021, however it is significantly based on different
+ * source codes provided in the QEMU sources.
  * Therefore I leave the original license:
  * 
  * Copyright (c) 2003 Fabrice Bellard
@@ -35,39 +62,14 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  *
- *
- *
- * Description of the ADC
- * 
- * Device uses 8 32-bit registers (with symbolic names defined in the file wzab_tst1.h)
- * TST1_DIV - writing to this register sets the internal frequency divider, defining
- *            the sampling rate of the converter. Writing of zero stops sampling at all.
- *            Writing of nonzero value - starts sampling
- * TST1_PAGE1 - TST_PAGE4
- *            The 4 registers above should be written with physical addresses of the
- *            pages allocated as the buffer for acquired data.
- *            Therefore the device offers 16*4096=16384 bytes buffer (i.e. buffer for
- *            4096 32-bit samples).
- * TST1_READP - The read pointer for data buffer (counts in 32-bit dwords!)
- *              the 30-th bit informs if the device requests interrupt
- *              the 31-st bit informs if "overrun" occured (see below).
- * TST1_WRITEP	- The write pointer for data buffer (count in 32-bit dwords!).
- *                If the new acquired value is about to overwrite the previous one, which 
- *                has not been received yet, the "overrun" status is set, and new data are ignored.
- *                To restart correct operation, you have to write TST1_DIV with 0, and then
- *                with the correct value.
- * TST1_CTRL - Currently only one (0th) bit of this register is used. If this bit is set
- *             to 1, the device generates interrupt after new samples arrive. If this
- *             bit is cleared, the device does not generate the interrupt
- * 
  * The device is connected to the PCI bus - it's memory and interrupt resources are
  * reported to the host using the standard PC mechanisms.
  */
 
 #define DEBUG_wzab1 1 
-//PCI IDs below are not registred! Use only for experiments!
+//PCI IDs below are not officially registered! Use only for experiments!
 #define PCI_VENDOR_ID_WZAB 0xabba
-#define PCI_DEVICE_ID_WZAB_WZADC1 0x0133
+#define PCI_DEVICE_ID_WZAB_WZDAQ1 0x3342
 #include "qemu/osdep.h"
 #include <inttypes.h>
 #include "qemu/compiler.h"
@@ -76,72 +78,72 @@
 #include "hw/hw.h"
 #include "hw/pci/pci.h"
 #include "qemu/timer.h"
-#include "wzab_adc1.h"
+#include "wzab_daq1.h"
 
-static uint64_t pci_wz_adc1_read(void *opaque, hwaddr addr, unsigned size);
-static void pci_wz_adc1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size);
+static uint64_t pci_wz_daq1_read(void *opaque, hwaddr addr, unsigned size);
+static void pci_wz_daq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size);
 
-typedef struct WzAdc1State {
-  /*<private>*/
-  PCIDevice parent_obj;
-  /*<public>*/
+typedef struct WzDaq1State {
+  PCIDevice pdev;
   MemoryRegion mmio;
-  uint32_t regs[TST1_REGS_NUM];
-  uint32_t writep, readp;
-  uint32_t wz_adc1_mmio_io_addr;
+  uint64_t regs[DAQ1_REGS_NUM];
+  uint64_t write_ptr, read_ptr;
   uint32_t overrun;
   uint32_t irq_pending;
-  uint32_t div;
-  uint32_t sample_val;
-  QEMUTimer * timer;
-} WzAdc1State;
+  QEMUTimer * daq_timer;
+} WzDaq1State;
 
-#define TYPE_PCI_WZADC1 "pci-wzadc1"
+#define TYPE_PCI_WZDAQ1 "pci-wzdaq1"
  
-#define PCI_WZADC1(obj) \
-OBJECT_CHECK(WzAdc1State, (obj), TYPE_PCI_WZADC1) 
-static const MemoryRegionOps pci_wz_adc1_mmio_ops = {
-    .read = pci_wz_adc1_read,
-    .write = pci_wz_adc1_write,
+#define PCI_WZDAQ1(obj) OBJECT_CHECK(WzDaq1State, obj, TYPE_PCI_WZDAQ1) 
+
+static const MemoryRegionOps pci_wzdaq1_mmio_ops = {
+    .read = pci_wzdaq1_read,
+    .write = pci_wzdaq1_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
     .impl = {
-        .min_access_size = 4, //Always 32-bit access!!
-        .max_access_size = 4,
+        .min_access_size = 8, //Always 64-bit access!!
+        .max_access_size = 8,
     },
 };
 
-static void wz_adc1_reset (void * opaque)
+static bool wzdaq1_msi_enabled(WzDaq1State * s)
+{
+   return msi_enabled(&s->pdev);
+}
+
+static void wzdaq1_reset (void * opaque)
 {
   WzAdc1State *s = opaque;
   memset(s->regs,0,sizeof(s->regs));
 #ifdef DEBUG_wzab1
-  printf("wzab_tst1 reset!\n");
+  printf("wzdaq1 reset!\n");
 #endif
 }
 
 /* called for read accesses to our register memory area */
-static uint64_t pci_wz_adc1_read(void *opaque, hwaddr addr, unsigned size)
+static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size)
 {
 #ifdef DEBUG_wzab1
   printf("Memory read: address %" PRIu64 "\n", (uint64_t) addr);
 #endif
   WzAdc1State *s = opaque;
-  uint32_t ret=0xbada4ea; //Special value returned when accessed non-existing register
-  addr = (addr/4) & 0x0ff;
+  uint64_t ret=0xbada4ea55aa55aa; //Special value returned when accessed non-existing register
+  addr = (addr/8) & 0x0ff;
   //Special cases
-  if(addr==TST1_READP) {
-    ret = s->readp | (s->overrun ? (1<<31) : 0) | (s->irq_pending ? (1<<30) : 0);
+  if(addr==DAQ1_READP) {
+    ret = s->readp;
 #ifdef DEBUG_wzab1
     printf(" value %x\n",ret);
 #endif
     return ret;
   }
-  if(addr==TST1_WRITEP) {
+  if(addr==DAQ1_WRITEP) {
     ret = s->writep;
 #ifdef DEBUG_wzab1
     printf(" value %x\n",ret);
 #endif
-    return s->writep;
+    return ret;
   }
   //normal case
   if(addr<TST1_REGS_NUM) {
@@ -155,20 +157,21 @@ static uint64_t pci_wz_adc1_read(void *opaque, hwaddr addr, unsigned size)
 
 
 /* called for write accesses to our register memory area */
-void pci_wz_adc1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
+void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
   WzAdc1State *s = opaque;
 #ifdef DEBUG_wzab1  
   printf("wzab1: zapis pod adres = 0x%016" PRIu64 ", 0x%016" PRIu64 "\n", addr, val);
 #endif
-  /* convert to wzab1 memory offset */
-  addr = (addr/4) & 0xff;
-  /* always write value to the register */
-  if(addr<TST1_REGS_NUM) {
+  /* convert to wzdaq1 memory offset */
+  addr = (addr/8) & 0xff;
+  /* always write value to the shadow register */
+  if(addr<DAQ1_REGS_NUM) {
     s->regs[addr]=val;
   }
+  /* for certain registers take additional actions */
   switch(addr) {
-  case TST1_DIV:
+  case DAQ1_DIV:
     if(val) {
       //Start sampling
       s->readp = 0;
@@ -203,6 +206,7 @@ void pci_wz_adc1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
       if(s->irq_pending) pci_irq_assert(&s->parent_obj);
     }	
     break;
+  /* Where do we keep our memor
   default:
     return;
     break;
