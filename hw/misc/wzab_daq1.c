@@ -116,10 +116,10 @@ static const MemoryRegionOps pci_wzdaq1_mmio_ops = {
 };
 
 /*
-static bool wzdaq1_msi_enabled(WzDaq1State * s)
-{
-    return msi_enabled(&s->pdev);
-}
+  static bool wzdaq1_msi_enabled(WzDaq1State * s)
+  {
+  return msi_enabled(&s->pdev);
+  }
 */
 
 static void wzdaq1_reset (void * opaque)
@@ -174,47 +174,55 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
     printf("wzab1: zapis pod adres = 0x%016" PRIu64 ", 0x%016" PRIu64 "\n", addr, val);
 #endif
     /* convert to wzdaq1 memory offset */
-    addr = (addr/8) & 0xff;
+    addr = (addr/8);
     /* always write value to the shadow register */
     if(addr<DAQ1_REGS_NUM) {
         s->regs[addr]=val;
-    }
-    /* for certain registers take additional actions */
-    switch(addr) {
-    case DAQ1_DIV:
-        if(val) {
-            //Start sampling
-            s->read_ptr = 0;
-            s->write_ptr = -1;
-            s->overrun = 0;
-            timer_mod(s->daq_timer,qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)+s->regs[DAQ1_PERIOD]);
-        } else {
-            //Stop sampling
+        /* for certain registers take additional actions */
+        switch(addr) {
+        case DAQ1_PERIOD:
+            if(val) {
+                //Start sampling
+                s->read_ptr = 0;
+                s->write_ptr = -1;
+                s->overrun = 0;
+                timer_mod(s->daq_timer,qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)+s->regs[DAQ1_PERIOD]);
+            } else {
+                //Stop sampling
 #ifdef DEBUG_wzab1
-            printf("deleting timer!\n");      
+                printf("deleting timer!\n");      
 #endif
-            timer_del(s->daq_timer);
-            s->read_ptr = 0;
-            s->write_ptr = 0;
-            s->overrun = 0;
+                timer_del(s->daq_timer);
+                s->read_ptr = 0;
+                s->write_ptr = 0;
+                s->overrun = 0;
+            }
+            break;
+
+        case DAQ1_READP:
+            s->read_ptr = val;
+            break;
+        case DAQ1_HPSHFT:
+            s->hpage_shift = val;
+            s->hpage_size = ((uint64_t) 1) << val;
+            s->hpage_mask = s->hpage_size - 1;
+            break;
+        case DAQ1_CTRL:
+            if((val & 1) == 0) {
+                //Switch the IRQ off
+                pci_irq_deassert(&s->pdev);
+            } else {
+                //Rise the IRQ if it's pending
+                if(s->irq_pending) pci_irq_assert(&s->pdev);
+            }	
+            break;
+        default:
+            return;
+            break;
         }
-        break;
-        break;
-    case DAQ1_READP:
-        s->read_ptr = val;
-        break;
-    case DAQ1_CTRL:
-        if((val & 1) == 0) {
-            //Switch the IRQ off
-            pci_irq_deassert(&s->pdev);
-        } else {
-            //Rise the IRQ if it's pending
-            if(s->irq_pending) pci_irq_assert(&s->pdev);
-        }	
-        break;
-    default:
-        return;
-        break;
+    } else if (( addr >= DAQ1_NBUFS ) && ( addr < 2 * DAQ1_NBUFS )) {
+        // Write the hugepage address to the buffer
+        s->buf_hps[addr-DAQ1_NBUFS] = val;
     }
 }
 
