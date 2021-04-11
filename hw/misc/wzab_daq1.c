@@ -87,7 +87,9 @@ typedef struct WzDaq1State {
   PCIDevice pdev;
   MemoryRegion mmio;
   uint64_t regs[DAQ1_REGS_NUM];
-  uint64_t write_ptr, read_ptr;
+  uint64_t write_ptr, read_ptr, ptr_mask;
+  uint64_t hbufs[DAQ1_NBUFS];
+  uint64_t 
   uint32_t overrun;
   uint32_t irq_pending;
   QEMUTimer * daq_timer;
@@ -114,7 +116,7 @@ static bool wzdaq1_msi_enabled(WzDaq1State * s)
 
 static void wzdaq1_reset (void * opaque)
 {
-  WzAdc1State *s = opaque;
+  WzDaq1State *s = opaque;
   memset(s->regs,0,sizeof(s->regs));
 #ifdef DEBUG_wzab1
   printf("wzdaq1 reset!\n");
@@ -127,7 +129,7 @@ static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size)
 #ifdef DEBUG_wzab1
   printf("Memory read: address %" PRIu64 "\n", (uint64_t) addr);
 #endif
-  WzAdc1State *s = opaque;
+  WzDaq1State *s = opaque;
   uint64_t ret=0xbada4ea55aa55aa; //Special value returned when accessed non-existing register
   addr = (addr/8) & 0x0ff;
   //Special cases
@@ -213,16 +215,47 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
   }
 }
 
-/* The procedure below emulates 100 of sampling cycles */
+/* 
+
+
+/* The procedure that adds words to the cyclic buffer */
+static int add_words(WzDaq1State * s, uint64_t wbuf *, int nwords)
+{
+   //Check how much space do we have in the buffer
+   uint64_t i;
+   uint64_t write_pos;
+   int res;
+   uint64_t wfree = (s->write_ptr - s->readp_ptr) & s->ptr_mask;
+   if (nwords > wfree) {
+     nwords = wfree;
+   }
+   write_pos = s->write_ptr;
+   for(i=0;i<nwords;i++) {
+     npage = write_pos >> hpage_shift;
+     page_ofs = write_pos & hpage_mask;
+     // Now we should calculate how many words we can write at once, and write it
+     // as a block transfer!
+     res = pci_dma_write(&s->pdev,s->
+   }
+}
+
+/* The procedure is called cyclically and either adds the next part of an event to the circular buffer,
+ * or closes the current event and writes the header of the new one.
+ * 
+ * 
+ */
+ 
 static void wzab1_tick(void *opaque)
 { 
   WzAdc1State * s = opaque;
-  //rearm timer
+  //Set the timer to the next value.
   timer_mod(s->timer,qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)+s->regs[TST1_DIV]);
-  //Write 100 samples to the buffer
+  //Write a few random samples to the buffer
   {
+    int evl;     //length of the segment
     int i;
-    for(i=0;i<100;i++) {
+    evl = (random() & 0xffff) + 10000;
+    for(i=0;i<evl;i++) {
       //We have place for 4096 samples, so we use only 12-bit pointer
       int new_writep = (s->writep+1) & ((1<<12) - 1);
       if (new_writep == s->readp) { //Overrun!
