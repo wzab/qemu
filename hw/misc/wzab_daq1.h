@@ -7,9 +7,9 @@
 #define DAQ1_STAT	4
 //Address of the huge page with descriptors of events
 #define DAQ1_EVTS	5
-
+#define DAQ1_PERIOD     6
 //Number of the 64-bit registers
-#define DAQ1_REGS_NUM	6
+#define DAQ1_REGS_NUM	7
 
 // The memory that stores the huge pages forming the data buffer is located in BAR0 at offset DAQ1_BUFF_OFFS
 // We want to align it to its size. Now we assume that 8192 buffers will be sufficient, so the offset is set to:
