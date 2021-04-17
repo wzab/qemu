@@ -10,9 +10,9 @@
  * The 64-bit base addresses of the hugepages are stored in the block
  * memory in the FPGA. Here it is modeled as an "mem_bufs" array.
  * (should they really be 64-bit? the lowest 21 bits are always zero!
- * so we have only 43 bits. Is there any additional limit on the 
+ * so we have only 43 bits. Is there any additional limit on the
  * upper bits?)
- * 
+ *
  * Except of this, we need a control register, that holds configuration
  * information.
  * o) Number of memory buffers
@@ -23,7 +23,7 @@
  * o) Other huge pages are in a block memory - 2^N buffers
  * o) We receive the data until we get "tlast". After that we have to store the event.
  *    (how we can simulate that in QEMU?)
- * 
+ *
  * So what must be in the "runtime information"?
  * o) Current write position - number of the HP page and offset in it.
  * o) Start position of the current event
@@ -35,13 +35,13 @@
  *
  * The QEMU model must contain also the emulated data source and its configuration.
  * Therefore there will be a few additional registers.
- * 
- * 
+ *
+ *
  * The code was written by Wojciech M. Zabolotny (wzab<at>ise.pw.edu.pl)
  * in March and April 2021, however it is significantly based on different
  * source codes provided in the QEMU sources.
  * Therefore I leave the original license:
- * 
+ *
  * Copyright (c) 2003 Fabrice Bellard
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -66,7 +66,7 @@
  * reported to the host using the standard PC mechanisms.
  */
 
-#define DEBUG_wzab1 1 
+#define DEBUG_wzab1 1
 //PCI IDs below are not officially registered! Use only for experiments!
 #define PCI_VENDOR_ID_WZAB 0xabba
 #define PCI_DEVICE_ID_WZAB_WZDAQ1 0x3342
@@ -103,7 +103,7 @@ typedef struct WzDaq1State {
 static uint64_t dt_buf[20000]; //Here we generatr the data before sending via DMA
 static uint64_t cur_dta = 0; //Current data, will be increased
 
-#define PCI_WZDAQ1(obj) OBJECT_CHECK(WzDaq1State, obj, TYPE_PCI_WZDAQ1) 
+#define PCI_WZDAQ1(obj) OBJECT_CHECK(WzDaq1State, obj, TYPE_PCI_WZDAQ1)
 
 static const MemoryRegionOps pci_wzdaq1_mmio_ops = {
     .read = pci_wzdaq1_read,
@@ -170,7 +170,7 @@ static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size)
 void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
     WzDaq1State *s = opaque;
-#ifdef DEBUG_wzab1  
+#ifdef DEBUG_wzab1
     printf("wzab1: zapis pod adres = 0x%016" PRIu64 ", 0x%016" PRIu64 "\n", addr, val);
 #endif
     /* convert to wzdaq1 memory offset */
@@ -190,7 +190,7 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
             } else {
                 //Stop sampling
 #ifdef DEBUG_wzab1
-                printf("deleting timer!\n");      
+                printf("deleting timer!\n");
 #endif
                 timer_del(s->daq_timer);
                 s->read_ptr = 0;
@@ -214,7 +214,7 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
             } else {
                 //Rise the IRQ if it's pending
                 if(s->irq_pending) pci_irq_assert(&s->pdev);
-            }	
+            }
             break;
         default:
             return;
@@ -253,7 +253,7 @@ static int add_words(WzDaq1State * s, uint64_t * wbuf, int nwords)
         res = pci_dma_write(&s->pdev,s->buf_hps[npage]+8*page_ofs, wbuf, 8*to_write);
         write_pos += to_write;
         nwords -= to_write;
-        wbuf += to_write;                
+        wbuf += to_write;
     }
     s->write_ptr = write_pos;
     return 1;
@@ -261,12 +261,12 @@ static int add_words(WzDaq1State * s, uint64_t * wbuf, int nwords)
 
 /* The procedure is called cyclically and either adds the next part of an event to the circular buffer,
  * or closes the current event and writes the header of the new one.
- * 
- * 
+ *
+ *
  */
 
 static void wzdaq1_tick(void *opaque)
-{ 
+{
     WzDaq1State * s = opaque;
     //Set the timer to the next value.
     timer_mod(s->daq_timer,qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)+s->regs[DAQ1_PERIOD]);
@@ -275,7 +275,7 @@ static void wzdaq1_tick(void *opaque)
         int evl;     //length of the segment
         int i;
         evl = (random() & 0x1fff) + 11000; // Less than 20000 (length of the buffer)
-        for(i=0;i<evl;i++) {
+        for(i=0; i<evl; i++) {
             dt_buf[i] = cur_dta++;
         }
         add_words(s, dt_buf, evl);
@@ -307,7 +307,7 @@ static void pci_wzdaq1_realize (PCIDevice *pdev, Error **errp)
 static void pci_wzdaq1_init(Object *obj)
 {
 }
- 
+
 static void
 pci_wzdaq1_uninit(PCIDevice *dev)
 {
@@ -328,7 +328,7 @@ static void pci_wzdaq1_class_init(ObjectClass *class, void *data)
     PCIDeviceClass *k = PCI_DEVICE_CLASS(class);
 
     k->realize = pci_wzdaq1_realize,
-        k->exit = pci_wzdaq1_uninit;
+       k->exit = pci_wzdaq1_uninit;
     k->vendor_id = PCI_VENDOR_ID_WZAB;
     k->device_id = PCI_DEVICE_ID_WZAB_WZDAQ1;
     k->revision = 0x00;
@@ -353,7 +353,7 @@ static void pci_wzdaq1_register_types(void)
         .class_init    = pci_wzdaq1_class_init,
         .interfaces = interfaces,
     };
-    
+
     type_register_static(&pci_wzdaq1_info);
 }
 
