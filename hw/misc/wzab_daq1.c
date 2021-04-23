@@ -79,6 +79,8 @@
 #include "hw/pci/pci.h"
 #include "hw/pci/msi.h"
 #include "qemu/timer.h"
+#include <msgpack.h>
+#include <czmq.h>
 #include "wzab_daq1.h"
 
 static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size);
@@ -96,6 +98,7 @@ typedef struct WzDaq1State {
     uint32_t overrun;
     uint32_t irq_pending;
     QEMUTimer * daq_timer;
+    QemuThread thread;
 } WzDaq1State;
 
 #define TYPE_PCI_WZDAQ1 "pci-wzdaq1"
@@ -259,6 +262,39 @@ static int add_words(WzDaq1State * s, uint64_t * wbuf, int nwords)
     return 1;
 }
 
+/* That procedure receives the events in a separate thread and writes data to the cyclic buffer */
+static void * receive_data_thread(void * arg)
+{
+    WzDaq1State * s = (WzDaq1State *) arg;
+    zsock_t *pull = zsock_new_pair ("");
+    zsock_bind(pull,"tcp://0.0.0.0:*[3000-]");
+    while(1) {
+      zmsg_t * msg = zmsg_recv (pull);
+      //Now convert it to msgpack
+      msgpack_unpacked umsg;
+      msgpack_unpacked_init(&umsg);
+      zframe_t * frame = zmsg_first(msg);
+
+      while(frame) {
+          msgpack_unpack_return ret = msgpack_unpack_next(&umsg,(const char *) zframe_data(frame), zframe_size(frame), NULL);
+          if(ret < 0) {
+              perror("unpacking data");
+              abort(); // To be corrected!
+          }
+        frame = zmsg_next(msg);
+      };
+      /* print the deserialized object. (here will be the handling of the message) */
+      msgpack_object_print(stdout, umsg.data);
+      puts("");
+      //Adds the data
+      add_words(s,(uint64_t *) &umsg.data, 12); /* Just placeholder!!! */
+      zmsg_destroy(&msg);
+      msgpack_unpacked_destroy(&umsg);
+    }
+    zsock_destroy (&pull);
+    return 0;    
+}
+
 /* The procedure is called cyclically and either adds the next part of an event to the circular buffer,
  * or closes the current event and writes the header of the new one.
  *
@@ -299,10 +335,15 @@ static void pci_wzdaq1_realize (PCIDevice *pdev, Error **errp)
                           "pci-wzadc1-mmio", 0x100); //@@sizeof(s->regs.u32));
     pci_register_bar (&s->pdev, 0,  PCI_BASE_ADDRESS_SPACE_MEMORY,&s->mmio);
     s->daq_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, wzdaq1_tick, s);
+    //Add the thread receiving the data
+    qemu_thread_create(&s->thread, "receive_data", receive_data_thread, s,
+                       QEMU_THREAD_JOINABLE);   
     //AUD_register_card ("wz_adc1", &s->card);
     wzdaq1_reset (s);
     //return 0;
 }
+
+
 
 static void pci_wzdaq1_init(Object *obj)
 {
@@ -327,8 +368,8 @@ static void pci_wzdaq1_class_init(ObjectClass *class, void *data)
     DeviceClass *dc = DEVICE_CLASS(class);
     PCIDeviceClass *k = PCI_DEVICE_CLASS(class);
 
-    k->realize = pci_wzdaq1_realize,
-       k->exit = pci_wzdaq1_uninit;
+    k->realize = pci_wzdaq1_realize;
+    k->exit = pci_wzdaq1_uninit;
     k->vendor_id = PCI_VENDOR_ID_WZAB;
     k->device_id = PCI_DEVICE_ID_WZAB_WZDAQ1;
     k->revision = 0x00;
