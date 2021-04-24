@@ -15,9 +15,13 @@ delivered via ZMQ protocol.
 In the first version, the structure is as follows:
 
 - Type of the record (8-byte string)
+
   - "WZDAQ1-B" Start of the new dataset
+
   - "WZDAQ1-C" Complete dataset
+
   - "WZDAQ1-E" End of the dataset
+
 - Sequence of 64-bit words with the collected data
 
 
