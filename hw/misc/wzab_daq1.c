@@ -79,7 +79,8 @@
 #include "hw/pci/pci.h"
 #include "hw/pci/msi.h"
 #include "qemu/timer.h"
-#include <msgpack.h>
+#include <string.h>
+#include <endian.h>
 #include <czmq.h>
 #include "wzab_daq1.h"
 
@@ -93,18 +94,18 @@ typedef struct WzDaq1State {
     uint64_t write_ptr, read_ptr, ptr_mask;
     uint64_t hpage_size, hpage_mask;
     int hpage_shift;
+    int nof_hp;
     uint64_t buf_hps[DAQ1_NBUFS]; //Addresses of HPs creating the circular buffer
+    uint64_t evt_write_ptr, evt_read_ptr, evt_ptr_mask;
     uint64_t evt_hp; //Address of HP keeping the event descriptors
+    uint64_t evt_num; //Number of the event
     uint32_t overrun;
     uint32_t irq_pending;
-    QEMUTimer * daq_timer;
+    //QEMUTimer * daq_timer;
     QemuThread thread;
 } WzDaq1State;
 
 #define TYPE_PCI_WZDAQ1 "pci-wzdaq1"
-
-static uint64_t dt_buf[20000]; //Here we generatr the data before sending via DMA
-static uint64_t cur_dta = 0; //Current data, will be increased
 
 #define PCI_WZDAQ1(obj) OBJECT_CHECK(WzDaq1State, obj, TYPE_PCI_WZDAQ1)
 
@@ -158,6 +159,27 @@ static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size)
 #endif
         return ret;
     }
+    if(addr==DAQ1_NOF_HP) {
+        ret = s->nof_hp;
+#ifdef DEBUG_wzab1
+        printf(" value %"PRIu64"\n",ret);
+#endif
+        return ret;
+    }
+    if(addr==DAQ1_EVT_WRITEP) {
+        ret = s->evt_write_ptr;
+#ifdef DEBUG_wzab1
+        printf(" value %"PRIu64"\n",ret);
+#endif
+        return ret;
+    }
+    if(addr==DAQ1_EVT_READP) {
+        ret = s->evt_read_ptr;
+#ifdef DEBUG_wzab1
+        printf(" value %"PRIu64"\n",ret);
+#endif
+        return ret;
+    }
     //normal case
     if(addr<DAQ1_REGS_NUM) {
         ret = s->regs[addr];
@@ -183,6 +205,8 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
         s->regs[addr]=val;
         /* for certain registers take additional actions */
         switch(addr) {
+/* We do not use timer, as the data are delivered by an external application.
+
         case DAQ1_PERIOD:
             if(val) {
                 //Start sampling
@@ -201,14 +225,21 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
                 s->overrun = 0;
             }
             break;
-
+*/
         case DAQ1_READP:
             s->read_ptr = val;
+            break;
+        case DAQ1_WRITEP:
+            s->write_ptr = val;
+            break;
+        case DAQ1_NOF_HP:
+            s->nof_hp = val;
             break;
         case DAQ1_HPSHFT:
             s->hpage_shift = val;
             s->hpage_size = ((uint64_t) 1) << val;
             s->hpage_mask = s->hpage_size - 1;
+            s->evt_ptr_mask = s->hpage_size - 1;
             break;
         case DAQ1_CTRL:
             if((val & 1) == 0) {
@@ -219,6 +250,10 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
                 if(s->irq_pending) pci_irq_assert(&s->pdev);
             }
             break;
+        case DAQ1_EVTS:
+            s->evt_hp = val;
+            s->evt_write_ptr = 0;
+            s->evt_read_ptr = 0;
         default:
             return;
             break;
@@ -229,7 +264,51 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
     }
 }
 
+/* The procedure closes the current data segment.
+ * Currently we write only the address of the last word 
+ * in the circular buffer.
+ *
+ */
 
+static int end_segment(WzDaq1State * s)
+{    
+    pci_dma_write(&s->pdev,s->evt_hp+3, &s->read_ptr, sizeof(s->read_ptr));                
+    return 0;    
+}
+
+/* The procedure starts the new data segment.
+ * Currently we zero the segment descriptor, then
+ * we write the segment number, and the position of the
+ * first word in the circular buffer.
+ *
+ * What wrong may happen in that process? 
+ * We may be not able to start the new segment.
+ * In that case we have to ignore the whole segment.
+ * We should set the appropriate bit in the status register.
+ *
+ */
+
+static int start_segment(WzDaq1State * s)
+{
+    int i;
+    uint64_t zero = 0;
+    uint64_t new_evt_ptr = (s->evt_write_ptr + DAQ1_EVT_DESC_SIZE) & s->ptr_mask;
+    if(new_evt_ptr == s->evt_read_ptr) {
+        //All segments are occupied, ignore that one and set the proper flag...
+        //That flag should also block reception of data (as they can't be assigned
+        //to the correct segment!
+    } else {
+        //Zero the segment
+        for(i=0;i<DAQ1_EVT_DESC_SIZE;i++)
+            pci_dma_write(&s->pdev,s->evt_hp+8*i, &zero, sizeof(zero));
+        //Now set the current event number;
+        pci_dma_write(&s->pdev,s->evt_hp+0, &s->evt_num, sizeof(s->evt_num));
+        //Now set the current write position
+        pci_dma_write(&s->pdev,s->evt_hp+1, &s->write_ptr, sizeof(s->write_ptr));                
+    }
+    s->evt_write_ptr = new_evt_ptr;
+    return 0;
+}
 
 /* The procedure that adds words to the cyclic buffer */
 static int add_words(WzDaq1State * s, uint64_t * wbuf, int nwords)
@@ -244,6 +323,7 @@ static int add_words(WzDaq1State * s, uint64_t * wbuf, int nwords)
     if (nwords > wfree) {
         nwords = wfree;
     }
+    //We assume that this is an atomic operation
     write_pos = s->write_ptr;
     while(nwords > 0) {
         npage = write_pos >> s->hpage_shift;
@@ -258,6 +338,7 @@ static int add_words(WzDaq1State * s, uint64_t * wbuf, int nwords)
         nwords -= to_write;
         wbuf += to_write;
     }
+    // We assume that this is an atomic operation
     s->write_ptr = write_pos;
     return 1;
 }
@@ -269,27 +350,53 @@ static void * receive_data_thread(void * arg)
     zsock_t *pull = zsock_new_pair ("");
     zsock_bind(pull,"tcp://0.0.0.0:*[3000-]");
     while(1) {
-      zmsg_t * msg = zmsg_recv (pull);
-      //Now convert it to msgpack
-      msgpack_unpacked umsg;
-      msgpack_unpacked_init(&umsg);
-      zframe_t * frame = zmsg_first(msg);
-
-      while(frame) {
-          msgpack_unpack_return ret = msgpack_unpack_next(&umsg,(const char *) zframe_data(frame), zframe_size(frame), NULL);
-          if(ret < 0) {
-              perror("unpacking data");
-              abort(); // To be corrected!
-          }
-        frame = zmsg_next(msg);
-      };
-      /* print the deserialized object. (here will be the handling of the message) */
-      msgpack_object_print(stdout, umsg.data);
-      puts("");
-      //Adds the data
-      add_words(s,(uint64_t *) &umsg.data, 12); /* Just placeholder!!! */
-      zmsg_destroy(&msg);
-      msgpack_unpacked_destroy(&umsg);
+        zmsg_t * msg = zmsg_recv (pull);
+        //This must be a single frame message!
+        if(zmsg_size(msg) != 1) {
+            //Handle improper size of the message          
+        } else {
+            zframe_t * frame = zmsg_first(msg);
+            //Process the frame
+            uint64_t * ptr = (uint64_t *)zframe_data(frame);
+            if(zframe_size(frame) % 8) {
+                printf("Frame size not N*8\n");
+            } else {
+                uint64_t * pend = ptr + zframe_size(frame)/8;
+                do {
+                    //Check the type of the record
+                    void * rec = (void *) ptr;
+                    if (!memcmp(rec,"WZDAQ1-E",8)) {
+                        printf("End of set!\n");
+                        //Here we should close the current data set
+                        end_segment(s);
+                        //and start the next one (maybe it should be suspended until the first data?)
+                        start_segment(s);
+                        ptr ++;
+                    } else if (!memcmp(rec,"WZDAQ1-D",8)) {
+                        if(++ptr >= pend) {
+                            printf("Error: WZDAQ1-D at end of frame\n");
+                            abort();
+                        }                        
+                        int nwords = be64toh(* ptr++);
+                        if (ptr + nwords > pend) {
+                            printf("Error: WZDAQ1-D data beyond the end of frame\n");
+                            abort();
+                        }
+                        printf("Frame: %d words\n",nwords);
+                        //Add the words to the circular buffer
+                        add_words(s,(uint64_t *) zframe_data(frame),nwords);
+                        ptr += nwords;
+                    } else if (!memcmp(rec,"WZDAQ1-Q",8)) {
+                        printf("End of run!\n");
+                        break;             
+                    } else {
+                        printf("Error: No data type!");
+                        abort();
+                    }        
+                } while(ptr < pend);
+            }
+        }
+        zmsg_destroy(&msg);
     }
     zsock_destroy (&pull);
     return 0;    
@@ -300,6 +407,7 @@ static void * receive_data_thread(void * arg)
  *
  *
  */
+/* Now the timer is switched off 
 
 static void wzdaq1_tick(void *opaque)
 {
@@ -323,7 +431,7 @@ static void wzdaq1_tick(void *opaque)
 #endif
     pci_irq_assert(&s->pdev);
 }
-
+*/
 static void pci_wzdaq1_realize (PCIDevice *pdev, Error **errp)
 {
     WzDaq1State *s = PCI_WZDAQ1(pdev);
@@ -334,7 +442,8 @@ static void pci_wzdaq1_realize (PCIDevice *pdev, Error **errp)
     memory_region_init_io(&s->mmio,OBJECT(s),&pci_wzdaq1_mmio_ops,s,
                           "pci-wzadc1-mmio", 0x100); //@@sizeof(s->regs.u32));
     pci_register_bar (&s->pdev, 0,  PCI_BASE_ADDRESS_SPACE_MEMORY,&s->mmio);
-    s->daq_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, wzdaq1_tick, s);
+    //Timer is not used, data are delivered by ZMQ!
+    //s->daq_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, wzdaq1_tick, s);
     //Add the thread receiving the data
     qemu_thread_create(&s->thread, "receive_data", receive_data_thread, s,
                        QEMU_THREAD_JOINABLE);   
@@ -354,7 +463,9 @@ pci_wzdaq1_uninit(PCIDevice *dev)
 {
     WzDaq1State *s = PCI_WZDAQ1(dev);
     wzdaq1_reset(s);
-    timer_free(s->daq_timer);
+    
+    qemu_thread_join(&s->thread);
+    //timer_free(s->daq_timer);
 }
 
 static void qdev_pci_wzdaq1_reset(DeviceState *dev)

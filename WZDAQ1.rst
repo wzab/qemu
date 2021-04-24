@@ -21,6 +21,12 @@ In the first version, the structure is as follows:
    
    After that the data must follow.
 
+To compile, you should add :czmq" to the list of libraries.
+I have called in "build" directory the following command:
+
+    LIBS="-lczmq" make
+
+after the configure is done.
 
 
 
