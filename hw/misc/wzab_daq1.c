@@ -99,8 +99,10 @@ typedef struct WzDaq1State {
     uint64_t evt_write_ptr, evt_read_ptr, evt_ptr_mask;
     uint64_t evt_hp; //Address of HP keeping the event descriptors
     uint64_t evt_num; //Number of the event
-    uint32_t overrun;
+    uint32_t error;
+    uint32_t running;
     uint32_t irq_pending;
+    uint32_t irq_enabled;
     //QEMUTimer * daq_timer;
     QemuThread thread;
 } WzDaq1State;
@@ -205,27 +207,6 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
         s->regs[addr]=val;
         /* for certain registers take additional actions */
         switch(addr) {
-/* We do not use timer, as the data are delivered by an external application.
-
-        case DAQ1_PERIOD:
-            if(val) {
-                //Start sampling
-                s->read_ptr = 0;
-                s->write_ptr = -1;
-                s->overrun = 0;
-                timer_mod(s->daq_timer,qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)+s->regs[DAQ1_PERIOD]);
-            } else {
-                //Stop sampling
-#ifdef DEBUG_wzab1
-                printf("deleting timer!\n");
-#endif
-                timer_del(s->daq_timer);
-                s->read_ptr = 0;
-                s->write_ptr = 0;
-                s->overrun = 0;
-            }
-            break;
-*/
         case DAQ1_READP:
             s->read_ptr = val;
             break;
@@ -242,12 +223,31 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
             s->evt_ptr_mask = s->hpage_size - 1;
             break;
         case DAQ1_CTRL:
-            if((val & 1) == 0) {
+            if(val == DAQ1_CMD_STOP) {
+                //Stop the engine
+                s->running = 0;
+            }
+            if(val == DAQ1_CMD_START) {
+                //Start the engine
+                s->error = 0;
+                s->running = 1;
+            }
+            if(val == DAQ1_CMD_DIS_IRQ) {
                 //Switch the IRQ off
+                s->irq_enabled = 0;
                 pci_irq_deassert(&s->pdev);
-            } else {
+            }
+            if(val == DAQ1_CMD_ENA_IRQ) {
+                s->irq_enabled = 1;
                 //Rise the IRQ if it's pending
                 if(s->irq_pending) pci_irq_assert(&s->pdev);
+            }
+            if(val == DAQ1_CMD_CONFIRM) {
+                if(s->read_ptr == s->write_ptr) {
+                    //Nothing to confirm!
+                    return;
+                }
+                s->read_ptr = (s->read_ptr + DAQ1_EVT_DESC_SIZE) & s->evt_ptr_mask;
             }
             break;
         case DAQ1_EVTS:
@@ -265,15 +265,30 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 }
 
 /* The procedure closes the current data segment.
- * Currently we write only the address of the last word 
+ * Currently we write only the address of the last word
  * in the circular buffer.
  *
+ * However, it creates one problem. I don't want the kernel
+ * to access the descriptors area (I don't have kernel mapping for it).
+ * How can I check in the kernel if the event is ready then?
+ * If I advance the write pointer when completing the previous event,
+ * I'll get an error, if the next event is not processed yet.
+ * However, that's OK as long, as I don't try to write a new event.
+ *
+ * I could encode the state of the event in the least significant bit of the
+ * write pointer. 0 - the event is being written, 1 - the event is completed.
+ *
+ * So now I simply call start_segment immediately after end_segment...
  */
 
 static int end_segment(WzDaq1State * s)
-{    
-    pci_dma_write(&s->pdev,s->evt_hp+3, &s->read_ptr, sizeof(s->read_ptr));                
-    return 0;    
+{
+    uint64_t status = 1;
+    //Address of the currently written event description
+    uint64_t daddr = s->evt_write_ptr;
+    pci_dma_write(&s->pdev,daddr+8*DAQ1_EVT_AFTER_LAST, &s->write_ptr, sizeof(s->write_ptr));
+    pci_dma_write(&s->pdev,daddr+8*DAQ1_EVT_STATUS, &status, sizeof(status));
+    return 0;
 }
 
 /* The procedure starts the new data segment.
@@ -281,7 +296,7 @@ static int end_segment(WzDaq1State * s)
  * we write the segment number, and the position of the
  * first word in the circular buffer.
  *
- * What wrong may happen in that process? 
+ * What wrong may happen in that process?
  * We may be not able to start the new segment.
  * In that case we have to ignore the whole segment.
  * We should set the appropriate bit in the status register.
@@ -297,14 +312,21 @@ static int start_segment(WzDaq1State * s)
         //All segments are occupied, ignore that one and set the proper flag...
         //That flag should also block reception of data (as they can't be assigned
         //to the correct segment!
+        //We stop the acquisition and set the error flag!
+        s->running = 0;
+        s->error = 1;
+        s->irq_pending = 1;
+        if(s->irq_enabled) {
+            pci_irq_assert(&s->pdev);
+        }
     } else {
         //Zero the segment
-        for(i=0;i<DAQ1_EVT_DESC_SIZE;i++)
-            pci_dma_write(&s->pdev,s->evt_hp+8*i, &zero, sizeof(zero));
+        for(i=0; i<DAQ1_EVT_DESC_SIZE; i++)
+            pci_dma_write(&s->pdev,new_evt_ptr+8*i, &zero, sizeof(zero));
         //Now set the current event number;
-        pci_dma_write(&s->pdev,s->evt_hp+0, &s->evt_num, sizeof(s->evt_num));
+        pci_dma_write(&s->pdev,new_evt_ptr+8*DAQ1_EVT_NUM, &s->evt_num, sizeof(s->evt_num++));
         //Now set the current write position
-        pci_dma_write(&s->pdev,s->evt_hp+1, &s->write_ptr, sizeof(s->write_ptr));                
+        pci_dma_write(&s->pdev,new_evt_ptr+8*DAQ1_EVT_FIRST, &s->write_ptr, sizeof(s->write_ptr));
     }
     s->evt_write_ptr = new_evt_ptr;
     return 0;
@@ -351,87 +373,66 @@ static void * receive_data_thread(void * arg)
     zsock_bind(pull,"tcp://0.0.0.0:*[3000-]");
     while(1) {
         zmsg_t * msg = zmsg_recv (pull);
-        //This must be a single frame message!
-        if(zmsg_size(msg) != 1) {
-            //Handle improper size of the message          
-        } else {
-            zframe_t * frame = zmsg_first(msg);
-            //Process the frame
-            uint64_t * ptr = (uint64_t *)zframe_data(frame);
-            if(zframe_size(frame) % 8) {
-                printf("Frame size not N*8\n");
+        //The engine must be running
+        if(s->running) {
+            //This must be a single frame message!
+            if(zmsg_size(msg) != 1) {
+                //Handle improper size of the message
             } else {
-                uint64_t * pend = ptr + zframe_size(frame)/8;
-                do {
-                    //Check the type of the record
-                    void * rec = (void *) ptr;
-                    if (!memcmp(rec,"WZDAQ1-E",8)) {
-                        printf("End of set!\n");
-                        //Here we should close the current data set
-                        end_segment(s);
-                        //and start the next one (maybe it should be suspended until the first data?)
-                        start_segment(s);
-                        ptr ++;
-                    } else if (!memcmp(rec,"WZDAQ1-D",8)) {
-                        if(++ptr >= pend) {
-                            printf("Error: WZDAQ1-D at end of frame\n");
-                            abort();
-                        }                        
-                        int nwords = be64toh(* ptr++);
-                        if (ptr + nwords > pend) {
-                            printf("Error: WZDAQ1-D data beyond the end of frame\n");
+                zframe_t * frame = zmsg_first(msg);
+                //Process the frame
+                uint64_t * ptr = (uint64_t *)zframe_data(frame);
+                if(zframe_size(frame) % 8) {
+                    printf("Frame size not N*8\n");
+                } else {
+                    uint64_t * pend = ptr + zframe_size(frame)/8;
+                    do {
+                        //Check the type of the record
+                        void * rec = (void *) ptr;
+                        if (!memcmp(rec,"WZDAQ1-E",8)) {
+                            printf("End of set!\n");
+                            //Here we should close the current data set
+                            end_segment(s);
+                            //and start the next one (maybe it should be suspended until the first data?)
+                            //No, it can't because it interferes with the method used to detect if
+                            //the event was completed.
+                            start_segment(s);
+                            //Raise the irq
+                            s->irq_pending = 1;
+                            if (s->irq_enabled)
+                                pci_irq_assert(&s->pdev);
+                            ptr ++;
+                        } else if (!memcmp(rec,"WZDAQ1-D",8)) {
+                            if(++ptr >= pend) {
+                                printf("Error: WZDAQ1-D at end of frame\n");
+                                abort();
+                            }
+                            int nwords = be64toh(* ptr++);
+                            if (ptr + nwords > pend) {
+                                printf("Error: WZDAQ1-D data beyond the end of frame\n");
+                                abort();
+                            }
+                            printf("Frame: %d words\n",nwords);
+                            //Add the words to the circular buffer
+                            add_words(s,(uint64_t *) zframe_data(frame),nwords);
+                            ptr += nwords;
+                        } else if (!memcmp(rec,"WZDAQ1-Q",8)) {
+                            printf("End of run!\n");
+                            break;
+                        } else {
+                            printf("Error: No data type!");
                             abort();
                         }
-                        printf("Frame: %d words\n",nwords);
-                        //Add the words to the circular buffer
-                        add_words(s,(uint64_t *) zframe_data(frame),nwords);
-                        ptr += nwords;
-                    } else if (!memcmp(rec,"WZDAQ1-Q",8)) {
-                        printf("End of run!\n");
-                        break;             
-                    } else {
-                        printf("Error: No data type!");
-                        abort();
-                    }        
-                } while(ptr < pend);
+                    } while(ptr < pend);
+                }
             }
         }
         zmsg_destroy(&msg);
     }
     zsock_destroy (&pull);
-    return 0;    
+    return 0;
 }
 
-/* The procedure is called cyclically and either adds the next part of an event to the circular buffer,
- * or closes the current event and writes the header of the new one.
- *
- *
- */
-/* Now the timer is switched off 
-
-static void wzdaq1_tick(void *opaque)
-{
-    WzDaq1State * s = opaque;
-    //Set the timer to the next value.
-    timer_mod(s->daq_timer,qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)+s->regs[DAQ1_PERIOD]);
-    //Write a few random samples to the buffer
-    {
-        int evl;     //length of the segment
-        int i;
-        evl = (random() & 0x1fff) + 11000; // Less than 20000 (length of the buffer)
-        for(i=0; i<evl; i++) {
-            dt_buf[i] = cur_dta++;
-        }
-        add_words(s, dt_buf, evl);
-    }
-    //Raise IRQ informing that the new block have arrived
-    s->irq_pending = 1;
-#ifdef DEBUG_wzab1
-    printf("Request IRQ!\n");
-#endif
-    pci_irq_assert(&s->pdev);
-}
-*/
 static void pci_wzdaq1_realize (PCIDevice *pdev, Error **errp)
 {
     WzDaq1State *s = PCI_WZDAQ1(pdev);
@@ -446,7 +447,7 @@ static void pci_wzdaq1_realize (PCIDevice *pdev, Error **errp)
     //s->daq_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, wzdaq1_tick, s);
     //Add the thread receiving the data
     qemu_thread_create(&s->thread, "receive_data", receive_data_thread, s,
-                       QEMU_THREAD_JOINABLE);   
+                       QEMU_THREAD_JOINABLE);
     //AUD_register_card ("wz_adc1", &s->card);
     wzdaq1_reset (s);
     //return 0;
@@ -463,7 +464,7 @@ pci_wzdaq1_uninit(PCIDevice *dev)
 {
     WzDaq1State *s = PCI_WZDAQ1(dev);
     wzdaq1_reset(s);
-    
+
     qemu_thread_join(&s->thread);
     //timer_free(s->daq_timer);
 }

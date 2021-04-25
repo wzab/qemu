@@ -21,3 +21,20 @@
 #define DAQ1_NBUFS	0x2000
 // Size of the event descriptor in 64-bit words (must be power of 2)
 #define DAQ1_EVT_DESC_SIZE 32
+
+//Layout of the EVENT descriptor
+#define DAQ1_EVT_NUM 0
+#define DAQ1_EVT_FIRST 1
+#define DAQ1_EVT_AFTER_LAST 2
+#define DAQ1_EVT_STATUS 3
+
+
+//Commands handled by CTRL register
+#define DAQ1_CMD_STOP 0
+#define DAQ1_CMD_START 1
+#define DAQ1_CMD_ENA_IRQ 2
+#define DAQ1_CMD_DIS_IRQ 3
+#define DAQ1_CMD_CONFIRM 4
+
+
+
