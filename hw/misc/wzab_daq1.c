@@ -186,6 +186,15 @@ static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size)
 #endif
         return ret;
     }
+    if(addr==DAQ1_STAT) {
+        ret = 0;
+        if(s->error)
+            ret |= 1;
+#ifdef DEBUG_wzab1
+        printf(" value %"PRIu64"\n",ret);
+#endif
+        return ret;
+    }
     //normal case
     if(addr<DAQ1_REGS_NUM) {
         ret = s->regs[addr];
@@ -217,8 +226,15 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
         case DAQ1_WRITEP:
             s->write_ptr = val;
             break;
+        case DAQ1_EVT_READP:
+            s->evt_read_ptr = val;
+            break;
+        case DAQ1_EVT_WRITEP:
+            s->evt_write_ptr = val;
+            break;
         case DAQ1_NOF_HP:
             s->nof_hp = val;
+            s->ptr_mask = ( s->hpage_size * val ) - 1;
             break;
         case DAQ1_HPSHFT:
             s->hpage_shift = val;
@@ -232,7 +248,16 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
                 s->running = 0;
             }
             if(val == DAQ1_CMD_START) {
+                int i;
+                uint64_t zero = 0;
                 //Start the engine
+                //Zero the 0th event
+                for(i=0; i<DAQ1_EVT_DESC_SIZE; i++)
+                    pci_dma_write(&s->pdev,s->evt_hp+8*i, &zero, sizeof(zero));
+                s->read_ptr = 0;
+                s->write_ptr = 0;
+                s->evt_read_ptr = 0;
+                s->evt_write_ptr = 0;
                 s->error = 0;
                 s->running = 1;
             }
@@ -247,11 +272,16 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
                 if(s->irq_pending) pci_irq_assert(&s->pdev);
             }
             if(val == DAQ1_CMD_CONFIRM) {
-                if(s->read_ptr == s->write_ptr) {
+                if(s->evt_read_ptr == s->evt_write_ptr) {
                     //Nothing to confirm!
                     return;
                 }
-                s->read_ptr = (s->read_ptr + DAQ1_EVT_DESC_SIZE) & s->evt_ptr_mask;
+                s->evt_read_ptr = (s->evt_read_ptr + DAQ1_EVT_DESC_SIZE) & s->evt_ptr_mask;
+                //Shouldn't it be protected with a mutex?
+                if(s->evt_read_ptr == s->evt_write_ptr) {                    
+                    s->irq_pending = 0;
+                    pci_irq_deassert(&s->pdev);
+                }
             }
             break;
         case DAQ1_EVTS:
@@ -311,7 +341,7 @@ static int start_segment(WzDaq1State * s)
 {
     int i;
     uint64_t zero = 0;
-    uint64_t new_evt_ptr = (s->evt_write_ptr + DAQ1_EVT_DESC_SIZE) & s->ptr_mask;
+    uint64_t new_evt_ptr = (s->evt_write_ptr + DAQ1_EVT_DESC_SIZE) & s->evt_ptr_mask;
     if(new_evt_ptr == s->evt_read_ptr) {
         //All segments are occupied, ignore that one and set the proper flag...
         //That flag should also block reception of data (as they can't be assigned
@@ -331,8 +361,8 @@ static int start_segment(WzDaq1State * s)
         pci_dma_write(&s->pdev,new_evt_ptr+8*DAQ1_EVT_NUM, &s->evt_num, sizeof(s->evt_num++));
         //Now set the current write position
         pci_dma_write(&s->pdev,new_evt_ptr+8*DAQ1_EVT_FIRST, &s->write_ptr, sizeof(s->write_ptr));
+        s->evt_write_ptr = new_evt_ptr;
     }
-    s->evt_write_ptr = new_evt_ptr;
     return 0;
 }
 
@@ -446,7 +476,7 @@ static void pci_wzdaq1_realize (PCIDevice *pdev, Error **errp)
     c[PCI_INTERRUPT_PIN] = 1;
     memory_region_init_io(&s->mmio,OBJECT(s),&pci_wzdaq1_mmio_ops,s,
                           "pci-wzdaq1-mmio", sizeof(uint64_t) * 2 * DAQ1_NBUFS);
-    pci_register_bar (&s->pdev, 0,  PCI_BASE_ADDRESS_SPACE_MEMORY | PCI_BASE_ADDRESS_MEM_TYPE_64 , &s->mmio);
+    pci_register_bar (&s->pdev, 0,  PCI_BASE_ADDRESS_SPACE_MEMORY | PCI_BASE_ADDRESS_MEM_TYPE_64, &s->mmio);
     //Timer is not used, data are delivered by ZMQ!
     //s->daq_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, wzdaq1_tick, s);
     //Add the thread receiving the data
