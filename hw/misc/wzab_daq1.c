@@ -33,6 +33,10 @@
  * o) In control register we only start the engine.
  * o) In the status register we only stop it.
  *
+ * ONE IMPORTANT REMARK: 
+ * The addresses of the huge pages are given as byte addresses.
+ * All indexes and masks used to count word positions are as 64-bit word addresses
+
  * The QEMU model must contain also the emulated data source and its configuration.
  * Therefore there will be a few additional registers.
  *
@@ -145,7 +149,7 @@ static void wzdaq1_reset (void * opaque)
 static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size)
 {
 #ifdef DEBUG_wzab1
-    printf("Memory read: address %" PRIu64 "\n", (uint64_t) addr);
+    printf("Memory read: address %" PRIx64 "\n", (uint64_t) addr);
 #endif
     WzDaq1State *s = opaque;
     uint64_t ret=0xbada4ea55aa55aa; //Special value returned when accessed non-existing register
@@ -154,35 +158,35 @@ static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size)
     if(addr==DAQ1_READP) {
         ret = s->read_ptr;
 #ifdef DEBUG_wzab1
-        printf(" value %"PRIu64"\n",ret);
+        printf(" value %"PRIx64"\n",ret);
 #endif
         return ret;
     }
     if(addr==DAQ1_WRITEP) {
         ret = s->write_ptr;
 #ifdef DEBUG_wzab1
-        printf(" value %"PRIu64"\n",ret);
+        printf(" value %"PRIx64"\n",ret);
 #endif
         return ret;
     }
     if(addr==DAQ1_NOF_HP) {
         ret = s->nof_hp;
 #ifdef DEBUG_wzab1
-        printf(" value %"PRIu64"\n",ret);
+        printf(" value %"PRIx64"\n",ret);
 #endif
         return ret;
     }
     if(addr==DAQ1_EVT_WRITEP) {
         ret = s->evt_write_ptr;
 #ifdef DEBUG_wzab1
-        printf(" value %"PRIu64"\n",ret);
+        printf(" value %"PRIx64"\n",ret);
 #endif
         return ret;
     }
     if(addr==DAQ1_EVT_READP) {
         ret = s->evt_read_ptr;
 #ifdef DEBUG_wzab1
-        printf(" value %"PRIu64"\n",ret);
+        printf(" value %"PRIx64"\n",ret);
 #endif
         return ret;
     }
@@ -191,7 +195,7 @@ static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size)
         if(s->error)
             ret |= 1;
 #ifdef DEBUG_wzab1
-        printf(" value %"PRIu64"\n",ret);
+        printf(" value %"PRIx64"\n",ret);
 #endif
         return ret;
     }
@@ -199,7 +203,7 @@ static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size)
     if(addr<DAQ1_REGS_NUM) {
         ret = s->regs[addr];
 #ifdef DEBUG_wzab1
-        printf(" value %"PRIu64"\n",ret);
+        printf(" value %"PRIx64"\n",ret);
 #endif
     }
     return ret;
@@ -211,7 +215,7 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
     WzDaq1State *s = opaque;
 #ifdef DEBUG_wzab1
-    printf("wzab1: zapis pod adres = 0x%016" PRIu64 ", 0x%016" PRIu64 "\n", addr, val);
+    printf("wzab1: zapis pod adres = 0x%016" PRIx64 ", 0x%016" PRIx64 "\n", addr, val);
 #endif
     /* convert to wzdaq1 memory offset */
     addr = (addr/8);
