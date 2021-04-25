@@ -118,7 +118,11 @@ static const MemoryRegionOps pci_wzdaq1_mmio_ops = {
     .impl = {
         .min_access_size = 8, //Always 64-bit access!!
         .max_access_size = 8,
-    }
+    },
+    .valid = {
+        .min_access_size = 8, //Always 64-bit access!!
+        .max_access_size = 8,
+    },
 };
 
 /*
@@ -441,8 +445,8 @@ static void pci_wzdaq1_realize (PCIDevice *pdev, Error **errp)
     /* TODO: RST# value should be 0. */
     c[PCI_INTERRUPT_PIN] = 1;
     memory_region_init_io(&s->mmio,OBJECT(s),&pci_wzdaq1_mmio_ops,s,
-                          "pci-wzadc1-mmio", 0x100); //@@sizeof(s->regs.u32));
-    pci_register_bar (&s->pdev, 0,  PCI_BASE_ADDRESS_SPACE_MEMORY,&s->mmio);
+                          "pci-wzdaq1-mmio", sizeof(uint64_t) * 2 * DAQ1_NBUFS);
+    pci_register_bar (&s->pdev, 0,  PCI_BASE_ADDRESS_SPACE_MEMORY | PCI_BASE_ADDRESS_MEM_TYPE_64 , &s->mmio);
     //Timer is not used, data are delivered by ZMQ!
     //s->daq_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, wzdaq1_tick, s);
     //Add the thread receiving the data
@@ -495,7 +499,7 @@ static void pci_wzdaq1_class_init(ObjectClass *class, void *data)
 static void pci_wzdaq1_register_types(void)
 {
     static InterfaceInfo interfaces[] = {
-        { INTERFACE_CONVENTIONAL_PCI_DEVICE },
+        { INTERFACE_PCIE_DEVICE },
         { },
     };
     static const TypeInfo pci_wzdaq1_info = {
