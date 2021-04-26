@@ -386,8 +386,9 @@ static int add_words(WzDaq1State * s, uint64_t * wbuf, int nwords)
     uint64_t page_ofs;
     uint64_t to_write;
     int res __attribute__((unused));
-    uint64_t wfree = (s->write_ptr - s->read_ptr) & s->ptr_mask;
+    uint64_t wfree = (s->read_ptr - s->write_ptr - 1) & s->ptr_mask;
     if (nwords > wfree) {
+        // We should somehow signal that we had to reject some data?
         nwords = wfree;
     }
     //We assume that this is an atomic operation
