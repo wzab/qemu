@@ -33,7 +33,7 @@
  * o) In control register we only start the engine.
  * o) In the status register we only stop it.
  *
- * ONE IMPORTANT REMARK: 
+ * ONE IMPORTANT REMARK:
  * The addresses of the huge pages are given as byte addresses.
  * All indexes and masks used to count word positions are as 64-bit word addresses
 
@@ -153,7 +153,7 @@ static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size)
 #endif
     WzDaq1State *s = opaque;
     uint64_t ret=0xbada4ea55aa55aa; //Special value returned when accessed non-existing register
-    addr = (addr/8) & 0x0ff;
+    addr = addr/8;
     //Special cases
     if(addr==DAQ1_READP) {
         ret = s->read_ptr;
@@ -205,7 +205,14 @@ static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size)
 #ifdef DEBUG_wzab1
         printf(" value %"PRIx64"\n",ret);
 #endif
+        return ret;
     }
+    if (( addr >= DAQ1_NBUFS ) && ( addr < 2 * DAQ1_NBUFS )) {
+        // Write the hugepage address to the buffer
+        ret = s->buf_hps[addr-DAQ1_NBUFS];
+        return ret;
+    }
+
     return ret;
 }
 
@@ -282,7 +289,7 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
                 }
                 s->evt_read_ptr = (s->evt_read_ptr + DAQ1_EVT_DESC_SIZE) & s->evt_ptr_mask;
                 //Shouldn't it be protected with a mutex?
-                if(s->evt_read_ptr == s->evt_write_ptr) {                    
+                if(s->evt_read_ptr == s->evt_write_ptr) {
                     s->irq_pending = 0;
                     pci_irq_deassert(&s->pdev);
                 }
