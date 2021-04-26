@@ -330,7 +330,7 @@ static int end_segment(WzDaq1State * s)
 {
     uint64_t status = 1;
     //Address of the currently written event description
-    uint64_t daddr = s->evt_write_ptr;
+    uint64_t daddr = s->evt_hp + s->evt_write_ptr *8 ;
     pci_dma_write(&s->pdev,daddr+8*DAQ1_EVT_AFTER_LAST, &s->write_ptr, sizeof(s->write_ptr));
     pci_dma_write(&s->pdev,daddr+8*DAQ1_EVT_STATUS, &status, sizeof(status));
     return 0;
@@ -365,13 +365,14 @@ static int start_segment(WzDaq1State * s)
             pci_irq_assert(&s->pdev);
         }
     } else {
+        uint64_t daddr = s->evt_hp + new_evt_ptr *8 ;
         //Zero the segment
         for(i=0; i<DAQ1_EVT_DESC_SIZE; i++)
-            pci_dma_write(&s->pdev,new_evt_ptr+8*i, &zero, sizeof(zero));
+            pci_dma_write(&s->pdev,daddr+8*i, &zero, sizeof(zero));
         //Now set the current event number;
-        pci_dma_write(&s->pdev,new_evt_ptr+8*DAQ1_EVT_NUM, &s->evt_num, sizeof(s->evt_num++));
+        pci_dma_write(&s->pdev,daddr+8*DAQ1_EVT_NUM, &s->evt_num, sizeof(s->evt_num++));
         //Now set the current write position
-        pci_dma_write(&s->pdev,new_evt_ptr+8*DAQ1_EVT_FIRST, &s->write_ptr, sizeof(s->write_ptr));
+        pci_dma_write(&s->pdev,daddr+8*DAQ1_EVT_FIRST, &s->write_ptr, sizeof(s->write_ptr));
         s->evt_write_ptr = new_evt_ptr;
     }
     return 0;
