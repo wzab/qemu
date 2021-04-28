@@ -404,8 +404,9 @@ static int add_words(WzDaq1State * s, uint64_t * wbuf, int nwords)
             to_write = nwords;
         // Now we should calculate how many words we can write at once, and write it
         // as a block transfer!
-        res = pci_dma_write(&s->pdev,s->buf_hps[npage]+page_ofs, wbuf, 8*to_write);
+        res = pci_dma_write(&s->pdev,s->buf_hps[npage]+8*page_ofs, wbuf, 8*to_write);
         write_pos += to_write;
+        write_pos &= s->ptr_mask;
         nwords -= to_write;
         wbuf += to_write;
     }
