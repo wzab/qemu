@@ -370,9 +370,11 @@ static int start_segment(WzDaq1State * s)
         for(i=0; i<DAQ1_EVT_DESC_SIZE; i++)
             pci_dma_write(&s->pdev,daddr+8*i, &zero, sizeof(zero));
         //Now set the current event number;
-        pci_dma_write(&s->pdev,daddr+8*DAQ1_EVT_NUM, &s->evt_num, sizeof(s->evt_num++));
+        s->evt_num++;
+        pci_dma_write(&s->pdev,daddr+8*DAQ1_EVT_NUM, &s->evt_num, sizeof(s->evt_num));
         //Now set the current write position
         pci_dma_write(&s->pdev,daddr+8*DAQ1_EVT_FIRST, &s->write_ptr, sizeof(s->write_ptr));
+        printf("New event ptr = 0x%" PRIx64 "\n",new_evt_ptr);
         s->evt_write_ptr = new_evt_ptr;
     }
     return 0;
@@ -402,7 +404,7 @@ static int add_words(WzDaq1State * s, uint64_t * wbuf, int nwords)
             to_write = nwords;
         // Now we should calculate how many words we can write at once, and write it
         // as a block transfer!
-        res = pci_dma_write(&s->pdev,s->buf_hps[npage]+8*page_ofs, wbuf, 8*to_write);
+        res = pci_dma_write(&s->pdev,s->buf_hps[npage]+page_ofs, wbuf, 8*to_write);
         write_pos += to_write;
         nwords -= to_write;
         wbuf += to_write;
@@ -461,7 +463,7 @@ static void * receive_data_thread(void * arg)
                             }
                             printf("Frame: %d words\n",nwords);
                             //Add the words to the circular buffer
-                            add_words(s,(uint64_t *) zframe_data(frame),nwords);
+                            add_words(s,(uint64_t *) ptr,nwords);
                             ptr += nwords;
                         } else if (!memcmp(rec,"WZDAQ1-Q",8)) {
                             printf("End of run!\n");
