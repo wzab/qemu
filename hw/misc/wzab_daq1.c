@@ -499,6 +499,10 @@ static void pci_wzdaq1_realize (PCIDevice *pdev, Error **errp)
     qemu_thread_create(&s->thread, "receive_data", receive_data_thread, s,
                        QEMU_THREAD_JOINABLE);
     //AUD_register_card ("wz_adc1", &s->card);
+    if (pcie_endpoint_cap_v1_init(pdev, 0x0e0) < 0) {
+        hw_error("Failed to initialize PCIe capability");
+    }
+    pcie_dev_ser_num_init(pdev, (uint16_t) 0x100,(uint64_t)0x1234567890abcdefll);
     wzdaq1_reset (s);
     //return 0;
 }
