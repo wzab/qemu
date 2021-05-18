@@ -1,0 +1,15 @@
+#!/bin/sh
+#printenv > /tmp/env
+DEVID=abba:3342
+DEVPATH=/devices/pci0000:00/0000:00:03.0/uio/uio0
+SLOTNAME=`basename \`readlink /sys/${DEVPATH}/device\``
+DLSPCI=`lspci -vvv -s ${SLOTNAME}`
+#Check if it is our device
+if [ -z  "`echo ${DLSPCI} | grep Device | grep ${DEVID}`" ] ; then
+  # It is not our device
+  exit 1
+fi
+DSNCAP=`lspci -vvv -s ${SLOTNAME} | grep "Device Serial Number" `
+echo daq/${DSNCAP##*" "}
+
+

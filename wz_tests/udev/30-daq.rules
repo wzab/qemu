@@ -1,0 +1,2 @@
+SUBSYSTEM=="uio" PROGRAM="/opt/bin/uio_namer" SYMLINK="%c"
+
