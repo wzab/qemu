@@ -83,6 +83,7 @@
 #include "hw/pci/pci.h"
 #include "hw/pci/msi.h"
 #include "qemu/timer.h"
+#include "hw/qdev-properties.h"
 #include <string.h>
 #include <endian.h>
 #include <czmq.h>
@@ -104,6 +105,7 @@ typedef struct WzDaq1State {
     uint64_t evt_hp; //Address of HP keeping the event descriptors
     uint64_t evt_num; //Number of the event
     uint32_t error;
+    uint64_t conf_dsn;
     uint32_t running;
     uint32_t irq_pending;
     uint32_t irq_enabled;
@@ -114,6 +116,10 @@ typedef struct WzDaq1State {
 #define TYPE_PCI_WZDAQ1 "pci-wzdaq1"
 
 #define PCI_WZDAQ1(obj) OBJECT_CHECK(WzDaq1State, obj, TYPE_PCI_WZDAQ1)
+
+static Property wzab_daq1_properties[] = {
+  DEFINE_PROP_UINT64("dsn", WzDaq1State, conf_dsn , INT64_MAX)
+};
 
 static const MemoryRegionOps pci_wzdaq1_mmio_ops = {
     .read = pci_wzdaq1_read,
@@ -502,7 +508,7 @@ static void pci_wzdaq1_realize (PCIDevice *pdev, Error **errp)
     if (pcie_endpoint_cap_v1_init(pdev, 0x0e0) < 0) {
         hw_error("Failed to initialize PCIe capability");
     }
-    pcie_dev_ser_num_init(pdev, (uint16_t) 0x100,(uint64_t)0x1234567890abcdefll);
+    pcie_dev_ser_num_init(pdev, (uint16_t) 0x100,(uint64_t) s->conf_dsn);
     wzdaq1_reset (s);
     //return 0;
 }
@@ -534,6 +540,7 @@ static void pci_wzdaq1_class_init(ObjectClass *class, void *data)
     DeviceClass *dc = DEVICE_CLASS(class);
     PCIDeviceClass *k = PCI_DEVICE_CLASS(class);
 
+    device_class_set_props(dc, wzab_daq1_properties);
     k->realize = pci_wzdaq1_realize;
     k->exit = pci_wzdaq1_uninit;
     k->vendor_id = PCI_VENDOR_ID_WZAB;
