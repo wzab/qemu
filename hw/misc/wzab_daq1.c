@@ -3,6 +3,13 @@
  *
  * Copyright Wojciech M. Zabolotny ( wzab@ise.pw.edu.pl ) 2021
  *
+ * Development of the model is partially supported by the
+ * European Union’s Horizon 2020 research and innovation programme
+ * under grant agreement No 871072.
+ * 
+ * The driver and application to the model is available at:
+ * https://gitlab.com/WZab/wzdaq_drv   
+ *
  * The code below implements a DAQ DMA engine, that writes the data to the
  * memory buffers, using the DMA.
  * It is assumed, that the memory buffers are based on hugepages
