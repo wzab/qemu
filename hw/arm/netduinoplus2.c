@@ -26,6 +26,7 @@
 #include "qapi/error.h"
 #include "hw/boards.h"
 #include "hw/qdev-properties.h"
+#include "sysemu/reset.h"
 #include "qemu/error-report.h"
 #include "hw/arm/stm32f405_soc.h"
 #include "hw/arm/boot.h"
@@ -33,9 +34,28 @@
 /* Main SYSCLK frequency in Hz (168MHz) */
 #define SYSCLK_FRQ 168000000ULL
 
+typedef struct ARMV7MResetArgs {
+    ARMCPU *cpu;
+    uint32_t reset_sp;
+    uint32_t reset_pc;
+} ARMV7MResetArgs;
+
+static void armv7m_reset(void *opaque)
+{
+    ARMV7MResetArgs *args = opaque;
+
+    cpu_reset(CPU(args->cpu));
+
+    args->cpu->env.regs[13] = args->reset_sp & 0xFFFFFFFC;
+    args->cpu->env.thumb = args->reset_pc & 1;
+    args->cpu->env.regs[15] = args->reset_pc & ~1;
+}
+
 static void netduinoplus2_init(MachineState *machine)
 {
     DeviceState *dev;
+    ARMV7MResetArgs reset_args;
+    uint64_t entry;
 
     /*
      * TODO: ideally we would model the SoC RCC and let it handle
@@ -48,9 +68,16 @@ static void netduinoplus2_init(MachineState *machine)
     qdev_prop_set_string(dev, "cpu-type", ARM_CPU_TYPE_NAME("cortex-m4"));
     sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
 
-    armv7m_load_kernel(ARM_CPU(first_cpu),
-                       machine->kernel_filename,
-                       FLASH_SIZE);
+    entry = armv7m_load_kernel(ARM_CPU(first_cpu),
+                               machine->kernel_filename,
+                               FLASH_SIZE);
+    reset_args = (ARMV7MResetArgs) {
+        .cpu = ARM_CPU(first_cpu),
+        .reset_pc = entry,
+        .reset_sp = (SRAM_BASE_ADDRESS + (SRAM_SIZE * 2) / 3),
+    };
+    qemu_register_reset(armv7m_reset,
+                        g_memdup(&reset_args, sizeof(reset_args)));
 }
 
 static void netduinoplus2_machine_init(MachineClass *mc)
