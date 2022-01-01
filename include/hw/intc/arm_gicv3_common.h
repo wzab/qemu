@@ -26,6 +26,7 @@
 
 #include "hw/sysbus.h"
 #include "hw/intc/arm_gic_common.h"
+#include "qom/object.h"
 
 /*
  * Maximum number of possible interrupts, determined by the GIC architecture.
@@ -34,6 +35,8 @@
  */
 #define GICV3_MAXIRQ 1020
 #define GICV3_MAXSPI (GICV3_MAXIRQ - GIC_INTERNAL)
+
+#define GICV3_LPI_INTID_START 8192
 
 #define GICV3_REDIST_SIZE 0x20000
 
@@ -152,7 +155,6 @@ struct GICv3CPUState {
     qemu_irq parent_fiq;
     qemu_irq parent_virq;
     qemu_irq parent_vfiq;
-    qemu_irq maintenance_irq;
 
     /* Redistributor */
     uint32_t level;                  /* Current IRQ level */
@@ -202,9 +204,26 @@ struct GICv3CPUState {
      * real state above; it doesn't need to be migrated.
      */
     PendingIrq hppi;
+
+    /*
+     * Cached information recalculated from LPI tables
+     * in guest memory
+     */
+    PendingIrq hpplpi;
+
     /* This is temporary working state, to avoid a malloc in gicv3_update() */
     bool seenbetter;
 };
+
+/*
+ * The redistributor pages might be split into more than one region
+ * on some machine types if there are many CPUs.
+ */
+typedef struct GICv3RedistRegion {
+    GICv3State *gic;
+    MemoryRegion iomem;
+    uint32_t cpuidx; /* index of first CPU this region covers */
+} GICv3RedistRegion;
 
 struct GICv3State {
     /*< private >*/
@@ -212,19 +231,23 @@ struct GICv3State {
     /*< public >*/
 
     MemoryRegion iomem_dist; /* Distributor */
-    MemoryRegion *iomem_redist; /* Redistributor Regions */
+    GICv3RedistRegion *redist_regions; /* Redistributor Regions */
     uint32_t *redist_region_count; /* redistributor count within each region */
     uint32_t nb_redist_regions; /* number of redist regions */
 
     uint32_t num_cpu;
     uint32_t num_irq;
     uint32_t revision;
+    bool lpi_enable;
     bool security_extn;
     bool irq_reset_nonsecure;
     bool gicd_no_migration_shift_bug;
 
     int dev_fd; /* kvm device fd if backed by kvm vgic support */
     Error *migration_blocker;
+
+    MemoryRegion *dma;
+    AddressSpace dma_as;
 
     /* Distributor */
 
@@ -279,23 +302,20 @@ GICV3_BITMAP_ACCESSORS(level)
 GICV3_BITMAP_ACCESSORS(edge_trigger)
 
 #define TYPE_ARM_GICV3_COMMON "arm-gicv3-common"
-#define ARM_GICV3_COMMON(obj) \
-     OBJECT_CHECK(GICv3State, (obj), TYPE_ARM_GICV3_COMMON)
-#define ARM_GICV3_COMMON_CLASS(klass) \
-     OBJECT_CLASS_CHECK(ARMGICv3CommonClass, (klass), TYPE_ARM_GICV3_COMMON)
-#define ARM_GICV3_COMMON_GET_CLASS(obj) \
-     OBJECT_GET_CLASS(ARMGICv3CommonClass, (obj), TYPE_ARM_GICV3_COMMON)
+typedef struct ARMGICv3CommonClass ARMGICv3CommonClass;
+DECLARE_OBJ_CHECKERS(GICv3State, ARMGICv3CommonClass,
+                     ARM_GICV3_COMMON, TYPE_ARM_GICV3_COMMON)
 
-typedef struct ARMGICv3CommonClass {
+struct ARMGICv3CommonClass {
     /*< private >*/
     SysBusDeviceClass parent_class;
     /*< public >*/
 
     void (*pre_save)(GICv3State *s);
     void (*post_load)(GICv3State *s);
-} ARMGICv3CommonClass;
+};
 
 void gicv3_init_irqs_and_mmio(GICv3State *s, qemu_irq_handler handler,
-                              const MemoryRegionOps *ops, Error **errp);
+                              const MemoryRegionOps *ops);
 
 #endif

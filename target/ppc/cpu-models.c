@@ -8,7 +8,7 @@
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
- * version 2 of the License, or (at your option) any later version.
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -67,40 +67,6 @@
     POWERPC_DEF_SVR(_name, _desc, _pvr, POWERPC_SVR_NONE, _type)
 
     /* Embedded PowerPC                                                      */
-    /* PowerPC 401 family                                                    */
-    POWERPC_DEF("401",           CPU_POWERPC_401,                    401,
-                "Generic PowerPC 401")
-    /* PowerPC 401 cores                                                     */
-    POWERPC_DEF("401a1",         CPU_POWERPC_401A1,                  401,
-                "PowerPC 401A1")
-    POWERPC_DEF("401b2",         CPU_POWERPC_401B2,                  401x2,
-                "PowerPC 401B2")
-    POWERPC_DEF("401c2",         CPU_POWERPC_401C2,                  401x2,
-                "PowerPC 401C2")
-    POWERPC_DEF("401d2",         CPU_POWERPC_401D2,                  401x2,
-                "PowerPC 401D2")
-    POWERPC_DEF("401e2",         CPU_POWERPC_401E2,                  401x2,
-                "PowerPC 401E2")
-    POWERPC_DEF("401f2",         CPU_POWERPC_401F2,                  401x2,
-                "PowerPC 401F2")
-    /* XXX: to be checked */
-    POWERPC_DEF("401g2",         CPU_POWERPC_401G2,                  401x2,
-                "PowerPC 401G2")
-    /* PowerPC 401 microcontrollers                                          */
-    POWERPC_DEF("iop480",        CPU_POWERPC_IOP480,                 IOP480,
-                "IOP480 (401 microcontroller)")
-    POWERPC_DEF("cobra",         CPU_POWERPC_COBRA,                  401,
-                "IBM Processor for Network Resources")
-    /* PowerPC 403 family                                                    */
-    /* PowerPC 403 microcontrollers                                          */
-    POWERPC_DEF("403ga",         CPU_POWERPC_403GA,                  403,
-                "PowerPC 403 GA")
-    POWERPC_DEF("403gb",         CPU_POWERPC_403GB,                  403,
-                "PowerPC 403 GB")
-    POWERPC_DEF("403gc",         CPU_POWERPC_403GC,                  403,
-                "PowerPC 403 GC")
-    POWERPC_DEF("403gcx",        CPU_POWERPC_403GCX,                 403GCX,
-                "PowerPC 403 GCX")
     /* PowerPC 405 family                                                    */
     /* PowerPC 405 cores                                                     */
     POWERPC_DEF("405d2",         CPU_POWERPC_405D2,                  405,
@@ -774,6 +740,10 @@
                 "POWER9 v1.0")
     POWERPC_DEF("power9_v2.0",   CPU_POWERPC_POWER9_DD20,            POWER9,
                 "POWER9 v2.0")
+    POWERPC_DEF("power10_v1.0",  CPU_POWERPC_POWER10_DD1,            POWER10,
+                "POWER10 v1.0")
+    POWERPC_DEF("power10_v2.0",  CPU_POWERPC_POWER10_DD20,           POWER10,
+                "POWER10 v2.0")
 #endif /* defined (TARGET_PPC64) */
 
 /***************************************************************************/
@@ -950,6 +920,7 @@ PowerPCCPUAlias ppc_cpu_aliases[] = {
     { "power8", "power8_v2.0" },
     { "power8nvl", "power8nvl_v1.0" },
     { "power9", "power9_v2.0" },
+    { "power10", "power10_v2.0" },
 #endif
 
     /* Generic PowerPCs */

@@ -29,7 +29,7 @@ static int get_bool(QEMUFile *f, void *pv, size_t size,
 }
 
 static int put_bool(QEMUFile *f, void *pv, size_t size,
-                    const VMStateField *field, QJSON *vmdesc)
+                    const VMStateField *field, JSONWriter *vmdesc)
 {
     bool *v = pv;
     qemu_put_byte(f, *v);
@@ -53,7 +53,7 @@ static int get_int8(QEMUFile *f, void *pv, size_t size,
 }
 
 static int put_int8(QEMUFile *f, void *pv, size_t size,
-                    const VMStateField *field, QJSON *vmdesc)
+                    const VMStateField *field, JSONWriter *vmdesc)
 {
     int8_t *v = pv;
     qemu_put_s8s(f, v);
@@ -77,7 +77,7 @@ static int get_int16(QEMUFile *f, void *pv, size_t size,
 }
 
 static int put_int16(QEMUFile *f, void *pv, size_t size,
-                     const VMStateField *field, QJSON *vmdesc)
+                     const VMStateField *field, JSONWriter *vmdesc)
 {
     int16_t *v = pv;
     qemu_put_sbe16s(f, v);
@@ -101,7 +101,7 @@ static int get_int32(QEMUFile *f, void *pv, size_t size,
 }
 
 static int put_int32(QEMUFile *f, void *pv, size_t size,
-                     const VMStateField *field, QJSON *vmdesc)
+                     const VMStateField *field, JSONWriter *vmdesc)
 {
     int32_t *v = pv;
     qemu_put_sbe32s(f, v);
@@ -178,7 +178,7 @@ static int get_int64(QEMUFile *f, void *pv, size_t size,
 }
 
 static int put_int64(QEMUFile *f, void *pv, size_t size,
-                     const VMStateField *field, QJSON *vmdesc)
+                     const VMStateField *field, JSONWriter *vmdesc)
 {
     int64_t *v = pv;
     qemu_put_sbe64s(f, v);
@@ -202,7 +202,7 @@ static int get_uint8(QEMUFile *f, void *pv, size_t size,
 }
 
 static int put_uint8(QEMUFile *f, void *pv, size_t size,
-                     const VMStateField *field, QJSON *vmdesc)
+                     const VMStateField *field, JSONWriter *vmdesc)
 {
     uint8_t *v = pv;
     qemu_put_8s(f, v);
@@ -226,7 +226,7 @@ static int get_uint16(QEMUFile *f, void *pv, size_t size,
 }
 
 static int put_uint16(QEMUFile *f, void *pv, size_t size,
-                      const VMStateField *field, QJSON *vmdesc)
+                      const VMStateField *field, JSONWriter *vmdesc)
 {
     uint16_t *v = pv;
     qemu_put_be16s(f, v);
@@ -250,7 +250,7 @@ static int get_uint32(QEMUFile *f, void *pv, size_t size,
 }
 
 static int put_uint32(QEMUFile *f, void *pv, size_t size,
-                      const VMStateField *field, QJSON *vmdesc)
+                      const VMStateField *field, JSONWriter *vmdesc)
 {
     uint32_t *v = pv;
     qemu_put_be32s(f, v);
@@ -300,7 +300,7 @@ static int get_uint64(QEMUFile *f, void *pv, size_t size,
 }
 
 static int put_uint64(QEMUFile *f, void *pv, size_t size,
-                      const VMStateField *field, QJSON *vmdesc)
+                      const VMStateField *field, JSONWriter *vmdesc)
 {
     uint64_t *v = pv;
     qemu_put_be64s(f, v);
@@ -325,7 +325,7 @@ static int get_nullptr(QEMUFile *f, void *pv, size_t size,
 }
 
 static int put_nullptr(QEMUFile *f, void *pv, size_t size,
-                        const VMStateField *field, QJSON *vmdesc)
+                        const VMStateField *field, JSONWriter *vmdesc)
 
 {
     if (pv == NULL) {
@@ -420,32 +420,6 @@ const VMStateInfo vmstate_info_uint16_equal = {
     .put  = put_uint16,
 };
 
-/* floating point */
-
-static int get_float64(QEMUFile *f, void *pv, size_t size,
-                       const VMStateField *field)
-{
-    float64 *v = pv;
-
-    *v = make_float64(qemu_get_be64(f));
-    return 0;
-}
-
-static int put_float64(QEMUFile *f, void *pv, size_t size,
-                       const VMStateField *field, QJSON *vmdesc)
-{
-    uint64_t *v = pv;
-
-    qemu_put_be64(f, float64_val(*v));
-    return 0;
-}
-
-const VMStateInfo vmstate_info_float64 = {
-    .name = "float64",
-    .get  = get_float64,
-    .put  = put_float64,
-};
-
 /* CPU_DoubleU type */
 
 static int get_cpudouble(QEMUFile *f, void *pv, size_t size,
@@ -458,7 +432,7 @@ static int get_cpudouble(QEMUFile *f, void *pv, size_t size,
 }
 
 static int put_cpudouble(QEMUFile *f, void *pv, size_t size,
-                         const VMStateField *field, QJSON *vmdesc)
+                         const VMStateField *field, JSONWriter *vmdesc)
 {
     CPU_DoubleU *v = pv;
     qemu_put_be32s(f, &v->l.upper);
@@ -483,7 +457,7 @@ static int get_buffer(QEMUFile *f, void *pv, size_t size,
 }
 
 static int put_buffer(QEMUFile *f, void *pv, size_t size,
-                      const VMStateField *field, QJSON *vmdesc)
+                      const VMStateField *field, JSONWriter *vmdesc)
 {
     uint8_t *v = pv;
     qemu_put_buffer(f, v, size);
@@ -514,7 +488,7 @@ static int get_unused_buffer(QEMUFile *f, void *pv, size_t size,
 }
 
 static int put_unused_buffer(QEMUFile *f, void *pv, size_t size,
-                             const VMStateField *field, QJSON *vmdesc)
+                             const VMStateField *field, JSONWriter *vmdesc)
 {
     static const uint8_t buf[1024];
     int block_len;
@@ -556,7 +530,7 @@ static int get_tmp(QEMUFile *f, void *pv, size_t size,
 }
 
 static int put_tmp(QEMUFile *f, void *pv, size_t size,
-                   const VMStateField *field, QJSON *vmdesc)
+                   const VMStateField *field, JSONWriter *vmdesc)
 {
     const VMStateDescription *vmsd = field->vmsd;
     void *tmp = g_malloc(size);
@@ -599,7 +573,7 @@ static int get_bitmap(QEMUFile *f, void *pv, size_t size,
 }
 
 static int put_bitmap(QEMUFile *f, void *pv, size_t size,
-                      const VMStateField *field, QJSON *vmdesc)
+                      const VMStateField *field, JSONWriter *vmdesc)
 {
     unsigned long *bmp = pv;
     int i, idx = 0;
@@ -663,7 +637,7 @@ static int get_qtailq(QEMUFile *f, void *pv, size_t unused_size,
 
 /* put for QTAILQ */
 static int put_qtailq(QEMUFile *f, void *pv, size_t unused_size,
-                      const VMStateField *field, QJSON *vmdesc)
+                      const VMStateField *field, JSONWriter *vmdesc)
 {
     const VMStateDescription *vmsd = field->vmsd;
     /* offset of the QTAILQ entry in a QTAILQ element*/
@@ -696,7 +670,7 @@ struct put_gtree_data {
     QEMUFile *f;
     const VMStateDescription *key_vmsd;
     const VMStateDescription *val_vmsd;
-    QJSON *vmdesc;
+    JSONWriter *vmdesc;
     int ret;
 };
 
@@ -729,7 +703,7 @@ static gboolean put_gtree_elem(gpointer key, gpointer value, gpointer data)
 }
 
 static int put_gtree(QEMUFile *f, void *pv, size_t unused_size,
-                     const VMStateField *field, QJSON *vmdesc)
+                     const VMStateField *field, JSONWriter *vmdesc)
 {
     bool direct_key = (!field->start);
     const VMStateDescription *key_vmsd = direct_key ? NULL : &field->vmsd[1];
@@ -842,4 +816,78 @@ const VMStateInfo vmstate_info_gtree = {
     .name = "gtree",
     .get  = get_gtree,
     .put  = put_gtree,
+};
+
+static int put_qlist(QEMUFile *f, void *pv, size_t unused_size,
+                     const VMStateField *field, JSONWriter *vmdesc)
+{
+    const VMStateDescription *vmsd = field->vmsd;
+    /* offset of the QTAILQ entry in a QTAILQ element*/
+    size_t entry_offset = field->start;
+    void *elm;
+    int ret;
+
+    trace_put_qlist(field->name, vmsd->name, vmsd->version_id);
+    QLIST_RAW_FOREACH(elm, pv, entry_offset) {
+        qemu_put_byte(f, true);
+        ret = vmstate_save_state(f, vmsd, elm, vmdesc);
+        if (ret) {
+            error_report("%s: failed to save %s (%d)", field->name,
+                         vmsd->name, ret);
+            return ret;
+        }
+    }
+    qemu_put_byte(f, false);
+    trace_put_qlist_end(field->name, vmsd->name);
+
+    return 0;
+}
+
+static int get_qlist(QEMUFile *f, void *pv, size_t unused_size,
+                     const VMStateField *field)
+{
+    int ret = 0;
+    const VMStateDescription *vmsd = field->vmsd;
+    /* size of a QLIST element */
+    size_t size = field->size;
+    /* offset of the QLIST entry in a QLIST element */
+    size_t entry_offset = field->start;
+    int version_id = field->version_id;
+    void *elm, *prev = NULL;
+
+    trace_get_qlist(field->name, vmsd->name, vmsd->version_id);
+    if (version_id > vmsd->version_id) {
+        error_report("%s %s",  vmsd->name, "too new");
+        return -EINVAL;
+    }
+    if (version_id < vmsd->minimum_version_id) {
+        error_report("%s %s",  vmsd->name, "too old");
+        return -EINVAL;
+    }
+
+    while (qemu_get_byte(f)) {
+        elm = g_malloc(size);
+        ret = vmstate_load_state(f, vmsd, elm, version_id);
+        if (ret) {
+            error_report("%s: failed to load %s (%d)", field->name,
+                         vmsd->name, ret);
+            g_free(elm);
+            return ret;
+        }
+        if (!prev) {
+            QLIST_RAW_INSERT_HEAD(pv, elm, entry_offset);
+        } else {
+            QLIST_RAW_INSERT_AFTER(pv, prev, elm, entry_offset);
+        }
+        prev = elm;
+    }
+    trace_get_qlist_end(field->name, vmsd->name);
+
+    return ret;
+}
+
+const VMStateInfo vmstate_info_qlist = {
+    .name = "qlist",
+    .get  = get_qlist,
+    .put  = put_qlist,
 };

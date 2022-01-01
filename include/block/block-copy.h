@@ -16,78 +16,81 @@
 #define BLOCK_COPY_H
 
 #include "block/block.h"
+#include "qemu/co-shared-resource.h"
 
-typedef struct BlockCopyInFlightReq {
-    int64_t start_byte;
-    int64_t end_byte;
-    QLIST_ENTRY(BlockCopyInFlightReq) list;
-    CoQueue wait_queue; /* coroutines blocked on this request */
-} BlockCopyInFlightReq;
+/* All APIs are thread-safe */
 
-typedef void (*ProgressBytesCallbackFunc)(int64_t bytes, void *opaque);
-typedef void (*ProgressResetCallbackFunc)(void *opaque);
-typedef struct BlockCopyState {
-    /*
-     * BdrvChild objects are not owned or managed by block-copy. They are
-     * provided by block-copy user and user is responsible for appropriate
-     * permissions on these children.
-     */
-    BdrvChild *source;
-    BdrvChild *target;
-    BdrvDirtyBitmap *copy_bitmap;
-    int64_t cluster_size;
-    bool use_copy_range;
-    int64_t copy_range_size;
-    uint64_t len;
-    QLIST_HEAD(, BlockCopyInFlightReq) inflight_reqs;
-
-    BdrvRequestFlags write_flags;
-
-    /*
-     * skip_unallocated:
-     *
-     * Used by sync=top jobs, which first scan the source node for unallocated
-     * areas and clear them in the copy_bitmap.  During this process, the bitmap
-     * is thus not fully initialized: It may still have bits set for areas that
-     * are unallocated and should actually not be copied.
-     *
-     * This is indicated by skip_unallocated.
-     *
-     * In this case, block_copy() will query the source’s allocation status,
-     * skip unallocated regions, clear them in the copy_bitmap, and invoke
-     * block_copy_reset_unallocated() every time it does.
-     */
-    bool skip_unallocated;
-
-    /* progress_bytes_callback: called when some copying progress is done. */
-    ProgressBytesCallbackFunc progress_bytes_callback;
-
-    /*
-     * progress_reset_callback: called when some bytes reset from copy_bitmap
-     * (see @skip_unallocated above). The callee is assumed to recalculate how
-     * many bytes remain based on the dirty bit count of copy_bitmap.
-     */
-    ProgressResetCallbackFunc progress_reset_callback;
-    void *progress_opaque;
-} BlockCopyState;
+typedef void (*BlockCopyAsyncCallbackFunc)(void *opaque);
+typedef struct BlockCopyState BlockCopyState;
+typedef struct BlockCopyCallState BlockCopyCallState;
 
 BlockCopyState *block_copy_state_new(BdrvChild *source, BdrvChild *target,
-                                     int64_t cluster_size,
-                                     BdrvRequestFlags write_flags,
                                      Error **errp);
 
-void block_copy_set_callbacks(
-        BlockCopyState *s,
-        ProgressBytesCallbackFunc progress_bytes_callback,
-        ProgressResetCallbackFunc progress_reset_callback,
-        void *progress_opaque);
+/* Function should be called prior any actual copy request */
+void block_copy_set_copy_opts(BlockCopyState *s, bool use_copy_range,
+                              bool compress);
+void block_copy_set_progress_meter(BlockCopyState *s, ProgressMeter *pm);
 
 void block_copy_state_free(BlockCopyState *s);
 
 int64_t block_copy_reset_unallocated(BlockCopyState *s,
                                      int64_t offset, int64_t *count);
 
-int coroutine_fn block_copy(BlockCopyState *s, int64_t start, uint64_t bytes,
-                            bool *error_is_read);
+int coroutine_fn block_copy(BlockCopyState *s, int64_t offset, int64_t bytes,
+                            bool ignore_ratelimit);
+
+/*
+ * Run block-copy in a coroutine, create corresponding BlockCopyCallState
+ * object and return pointer to it. Never returns NULL.
+ *
+ * Caller is responsible to call block_copy_call_free() to free
+ * BlockCopyCallState object.
+ *
+ * @max_workers means maximum of parallel coroutines to execute sub-requests,
+ * must be > 0.
+ *
+ * @max_chunk means maximum length for one IO operation. Zero means unlimited.
+ */
+BlockCopyCallState *block_copy_async(BlockCopyState *s,
+                                     int64_t offset, int64_t bytes,
+                                     int max_workers, int64_t max_chunk,
+                                     BlockCopyAsyncCallbackFunc cb,
+                                     void *cb_opaque);
+
+/*
+ * Free finished BlockCopyCallState. Trying to free running
+ * block-copy will crash.
+ */
+void block_copy_call_free(BlockCopyCallState *call_state);
+
+/*
+ * Note, that block-copy call is marked finished prior to calling
+ * the callback.
+ */
+bool block_copy_call_finished(BlockCopyCallState *call_state);
+bool block_copy_call_succeeded(BlockCopyCallState *call_state);
+bool block_copy_call_failed(BlockCopyCallState *call_state);
+bool block_copy_call_cancelled(BlockCopyCallState *call_state);
+int block_copy_call_status(BlockCopyCallState *call_state, bool *error_is_read);
+
+void block_copy_set_speed(BlockCopyState *s, uint64_t speed);
+void block_copy_kick(BlockCopyCallState *call_state);
+
+/*
+ * Cancel running block-copy call.
+ *
+ * Cancel leaves block-copy state valid: dirty bits are correct and you may use
+ * cancel + <run block_copy with same parameters> to emulate pause/resume.
+ *
+ * Note also, that the cancel is async: it only marks block-copy call to be
+ * cancelled. So, the call may be cancelled (block_copy_call_cancelled() reports
+ * true) but not yet finished (block_copy_call_finished() reports false).
+ */
+void block_copy_call_cancel(BlockCopyCallState *call_state);
+
+BdrvDirtyBitmap *block_copy_dirty_bitmap(BlockCopyState *s);
+int64_t block_copy_cluster_size(BlockCopyState *s);
+void block_copy_set_skip_unallocated(BlockCopyState *s, bool skip);
 
 #endif /* BLOCK_COPY_H */

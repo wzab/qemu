@@ -1,4 +1,5 @@
 # -*- Mode: Python -*-
+# vim: filetype=python
 #
 
 ##
@@ -11,7 +12,7 @@
 #
 # Note: This event is rate-limited.
 #
-# Since: 0.13.0
+# Since: 0.13
 #
 # Example:
 #
@@ -22,7 +23,17 @@
 ##
 { 'event': 'RTC_CHANGE',
   'data': { 'offset': 'int' },
-  'if': 'defined(TARGET_ALPHA) || defined(TARGET_ARM) || defined(TARGET_HPPA) || defined(TARGET_I386) || defined(TARGET_MIPS) || defined(TARGET_MIPS64) || defined(TARGET_MOXIE) || defined(TARGET_PPC) || defined(TARGET_PPC64) || defined(TARGET_S390X) || defined(TARGET_SH4) || defined(TARGET_SPARC)' }
+  'if': { 'any': [ 'TARGET_ALPHA',
+                   'TARGET_ARM',
+                   'TARGET_HPPA',
+                   'TARGET_I386',
+                   'TARGET_MIPS',
+                   'TARGET_MIPS64',
+                   'TARGET_PPC',
+                   'TARGET_PPC64',
+                   'TARGET_S390X',
+                   'TARGET_SH4',
+                   'TARGET_SPARC' ] } }
 
 ##
 # @rtc-reset-reinjection:
@@ -41,7 +52,7 @@
 #
 ##
 { 'command': 'rtc-reset-reinjection',
-  'if': 'defined(TARGET_I386)' }
+  'if': 'TARGET_I386' }
 
 
 ##
@@ -68,7 +79,7 @@
 { 'enum': 'SevState',
   'data': ['uninit', 'launch-update', 'launch-secret', 'running',
            'send-update', 'receive-update' ],
-  'if': 'defined(TARGET_I386)' }
+  'if': 'TARGET_I386' }
 
 ##
 # @SevInfo:
@@ -100,7 +111,7 @@
               'state' : 'SevState',
               'handle' : 'uint32'
             },
-  'if': 'defined(TARGET_I386)'
+  'if': 'TARGET_I386'
 }
 
 ##
@@ -121,7 +132,7 @@
 #
 ##
 { 'command': 'query-sev', 'returns': 'SevInfo',
-  'if': 'defined(TARGET_I386)' }
+  'if': 'TARGET_I386' }
 
 
 ##
@@ -135,7 +146,7 @@
 #
 ##
 { 'struct': 'SevLaunchMeasureInfo', 'data': {'data': 'str'},
-  'if': 'defined(TARGET_I386)' }
+  'if': 'TARGET_I386' }
 
 ##
 # @query-sev-launch-measure:
@@ -153,7 +164,7 @@
 #
 ##
 { 'command': 'query-sev-launch-measure', 'returns': 'SevLaunchMeasureInfo',
-  'if': 'defined(TARGET_I386)' }
+  'if': 'TARGET_I386' }
 
 
 ##
@@ -178,7 +189,7 @@
             'cert-chain': 'str',
             'cbitpos': 'int',
             'reduced-phys-bits': 'int'},
-  'if': 'defined(TARGET_I386)' }
+  'if': 'TARGET_I386' }
 
 ##
 # @query-sev-capabilities:
@@ -198,7 +209,65 @@
 #
 ##
 { 'command': 'query-sev-capabilities', 'returns': 'SevCapability',
-  'if': 'defined(TARGET_I386)' }
+  'if': 'TARGET_I386' }
+
+##
+# @sev-inject-launch-secret:
+#
+# This command injects a secret blob into memory of SEV guest.
+#
+# @packet-header: the launch secret packet header encoded in base64
+#
+# @secret: the launch secret data to be injected encoded in base64
+#
+# @gpa: the guest physical address where secret will be injected.
+#
+# Since: 6.0
+#
+##
+{ 'command': 'sev-inject-launch-secret',
+  'data': { 'packet-header': 'str', 'secret': 'str', '*gpa': 'uint64' },
+  'if': 'TARGET_I386' }
+
+##
+# @SevAttestationReport:
+#
+# The struct describes attestation report for a Secure Encrypted
+# Virtualization feature.
+#
+# @data:  guest attestation report (base64 encoded)
+#
+#
+# Since: 6.1
+##
+{ 'struct': 'SevAttestationReport',
+  'data': { 'data': 'str'},
+  'if': 'TARGET_I386' }
+
+##
+# @query-sev-attestation-report:
+#
+# This command is used to get the SEV attestation report, and is
+# supported on AMD X86 platforms only.
+#
+# @mnonce: a random 16 bytes value encoded in base64 (it will be
+#          included in report)
+#
+# Returns: SevAttestationReport objects.
+#
+# Since: 6.1
+#
+# Example:
+#
+# -> { "execute" : "query-sev-attestation-report",
+#                  "arguments": { "mnonce": "aaaaaaa" } }
+# <- { "return" : { "data": "aaaaaaaabbbddddd"} }
+#
+##
+{ 'command': 'query-sev-attestation-report',
+  'data': { 'mnonce': 'str' },
+  'returns': 'SevAttestationReport',
+  'if': 'TARGET_I386' }
 
 ##
 # @dump-skeys:
@@ -220,7 +289,7 @@
 ##
 { 'command': 'dump-skeys',
   'data': { 'filename': 'str' },
-  'if': 'defined(TARGET_S390X)' }
+  'if': 'TARGET_S390X' }
 
 ##
 # @GICCapability:
@@ -230,14 +299,14 @@
 # QEMU/KVM software version, but also decided by the hardware that
 # the program is running upon.
 #
-# @version:  version of GIC to be described. Currently, only 2 and 3
-#            are supported.
+# @version: version of GIC to be described. Currently, only 2 and 3
+#           are supported.
 #
 # @emulated: whether current QEMU/hardware supports emulated GIC
 #            device in user space.
 #
-# @kernel:   whether current QEMU/hardware supports hardware
-#            accelerated GIC device in kernel.
+# @kernel: whether current QEMU/hardware supports hardware
+#          accelerated GIC device in kernel.
 #
 # Since: 2.6
 ##
@@ -245,7 +314,7 @@
   'data': { 'version': 'int',
             'emulated': 'bool',
             'kernel': 'bool' },
-  'if': 'defined(TARGET_ARM)' }
+  'if': 'TARGET_ARM' }
 
 ##
 # @query-gic-capabilities:
@@ -265,4 +334,81 @@
 #
 ##
 { 'command': 'query-gic-capabilities', 'returns': ['GICCapability'],
-  'if': 'defined(TARGET_ARM)' }
+  'if': 'TARGET_ARM' }
+
+
+##
+# @SGXEPCSection:
+#
+# Information about intel SGX EPC section info
+#
+# @node: the numa node
+#
+# @size: the size of epc section
+#
+# Since: 6.2
+##
+{ 'struct': 'SGXEPCSection',
+  'data': { 'node': 'int',
+            'size': 'uint64'}}
+
+##
+# @SGXInfo:
+#
+# Information about intel Safe Guard eXtension (SGX) support
+#
+# @sgx: true if SGX is supported
+#
+# @sgx1: true if SGX1 is supported
+#
+# @sgx2: true if SGX2 is supported
+#
+# @flc: true if FLC is supported
+#
+# @sections: The EPC sections info for guest
+#
+# Since: 6.2
+##
+{ 'struct': 'SGXInfo',
+  'data': { 'sgx': 'bool',
+            'sgx1': 'bool',
+            'sgx2': 'bool',
+            'flc': 'bool',
+            'sections': ['SGXEPCSection']},
+   'if': 'TARGET_I386' }
+
+##
+# @query-sgx:
+#
+# Returns information about SGX
+#
+# Returns: @SGXInfo
+#
+# Since: 6.2
+#
+# Example:
+#
+# -> { "execute": "query-sgx" }
+# <- { "return": { "sgx": true, "sgx1" : true, "sgx2" : true,
+#                  "flc": true, "section-size" : 0 } }
+#
+##
+{ 'command': 'query-sgx', 'returns': 'SGXInfo', 'if': 'TARGET_I386' }
+
+##
+# @query-sgx-capabilities:
+#
+# Returns information from host SGX capabilities
+#
+# Returns: @SGXInfo
+#
+# Since: 6.2
+#
+# Example:
+#
+# -> { "execute": "query-sgx-capabilities" }
+# <- { "return": { "sgx": true, "sgx1" : true, "sgx2" : true,
+#                  "flc": true, "section-size" : 0 } }
+#
+##
+{ 'command': 'query-sgx-capabilities', 'returns': 'SGXInfo', 'if': 'TARGET_I386' }

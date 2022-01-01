@@ -42,9 +42,11 @@
 #include <usbredirfilter.h>
 
 #include "hw/qdev-properties.h"
+#include "hw/qdev-properties-system.h"
 #include "hw/usb.h"
 #include "migration/qemu-file-types.h"
 #include "migration/vmstate.h"
+#include "qom/object.h"
 
 /* ERROR is defined below. Remove any previous definition. */
 #undef ERROR
@@ -113,6 +115,8 @@ struct USBRedirDevice {
     /* Properties */
     CharBackend cs;
     bool enable_streams;
+    bool suppress_remote_wake;
+    bool in_write;
     uint8_t debug;
     int32_t bootindex;
     char *filter_str;
@@ -142,7 +146,8 @@ struct USBRedirDevice {
 };
 
 #define TYPE_USB_REDIR "usb-redir"
-#define USB_REDIRECT(obj) OBJECT_CHECK(USBRedirDevice, (obj), TYPE_USB_REDIR)
+DECLARE_INSTANCE_CHECKER(USBRedirDevice, USB_REDIRECT,
+                         TYPE_USB_REDIR)
 
 static void usbredir_hello(void *priv, struct usb_redir_hello_header *h);
 static void usbredir_device_connect(void *priv,
@@ -238,7 +243,7 @@ static void usbredir_log_data(USBRedirDevice *dev, const char *desc,
     if (dev->debug < usbredirparser_debug_data) {
         return;
     }
-    qemu_hexdump((char *)data, stderr, desc, len);
+    qemu_hexdump(stderr, desc, data, len);
 }
 
 /*
@@ -265,7 +270,7 @@ static int usbredir_read(void *priv, uint8_t *data, int count)
     return count;
 }
 
-static gboolean usbredir_write_unblocked(GIOChannel *chan, GIOCondition cond,
+static gboolean usbredir_write_unblocked(void *do_not_use, GIOCondition cond,
                                          void *opaque)
 {
     USBRedirDevice *dev = opaque;
@@ -290,6 +295,13 @@ static int usbredir_write(void *priv, uint8_t *data, int count)
         return 0;
     }
 
+    /* Recursion check */
+    if (dev->in_write) {
+        DPRINTF("usbredir_write recursion\n");
+        return 0;
+    }
+    dev->in_write = true;
+
     r = qemu_chr_fe_write(&dev->cs, data, count);
     if (r < count) {
         if (!dev->watch) {
@@ -300,6 +312,7 @@ static int usbredir_write(void *priv, uint8_t *data, int count)
             r = 0;
         }
     }
+    dev->in_write = false;
     return r;
 }
 
@@ -463,7 +476,7 @@ static int bufp_alloc(USBRedirDevice *dev, uint8_t *data, uint16_t len,
     if (dev->endpoint[EP2I(ep)].bufpq_dropping_packets) {
         if (dev->endpoint[EP2I(ep)].bufpq_size >
                 dev->endpoint[EP2I(ep)].bufpq_target_size) {
-            free(data);
+            free(free_on_destroy);
             return -1;
         }
         dev->endpoint[EP2I(ep)].bufpq_dropping_packets = 0;
@@ -607,7 +620,7 @@ static void usbredir_handle_iso_data(USBRedirDevice *dev, USBPacket *p,
                 .endpoint = ep,
                 .length = p->iov.size
             };
-            uint8_t buf[p->iov.size];
+            g_autofree uint8_t *buf = g_malloc(p->iov.size);
             /* No id, we look at the ep when receiving a status back */
             usb_packet_copy(p, buf, p->iov.size);
             usbredirparser_send_iso_packet(dev->parser, 0, &iso_packet,
@@ -805,7 +818,7 @@ static void usbredir_handle_bulk_data(USBRedirDevice *dev, USBPacket *p,
         usbredirparser_send_bulk_packet(dev->parser, p->id,
                                         &bulk_packet, NULL, 0);
     } else {
-        uint8_t buf[size];
+        g_autofree uint8_t *buf = g_malloc(size);
         usb_packet_copy(p, buf, size);
         usbredir_log_data(dev, "bulk data out:", buf, size);
         usbredirparser_send_bulk_packet(dev->parser, p->id,
@@ -910,7 +923,7 @@ static void usbredir_handle_interrupt_out_data(USBRedirDevice *dev,
                                                USBPacket *p, uint8_t ep)
 {
     struct usb_redir_interrupt_packet_header interrupt_packet;
-    uint8_t buf[p->iov.size];
+    g_autofree uint8_t *buf = g_malloc(p->iov.size);
 
     DPRINTF("interrupt-out ep %02X len %zd id %"PRIu64"\n", ep,
             p->iov.size, p->id);
@@ -1354,7 +1367,7 @@ static void usbredir_chardev_read(void *opaque, const uint8_t *buf, int size)
     usbredirparser_do_write(dev->parser);
 }
 
-static void usbredir_chardev_event(void *opaque, int event)
+static void usbredir_chardev_event(void *opaque, QEMUChrEvent event)
 {
     USBRedirDevice *dev = opaque;
 
@@ -1370,6 +1383,11 @@ static void usbredir_chardev_event(void *opaque, int event)
         DPRINTF("chardev close\n");
         qemu_bh_schedule(dev->chardev_close_bh);
         break;
+    case CHR_EVENT_BREAK:
+    case CHR_EVENT_MUX_IN:
+    case CHR_EVENT_MUX_OUT:
+        /* Ignore */
+        break;
     }
 }
 
@@ -1377,7 +1395,7 @@ static void usbredir_chardev_event(void *opaque, int event)
  * init + destroy
  */
 
-static void usbredir_vm_state_change(void *priv, int running, RunState state)
+static void usbredir_vm_state_change(void *priv, bool running, RunState state)
 {
     USBRedirDevice *dev = priv;
 
@@ -1453,7 +1471,7 @@ static void usbredir_cleanup_device_queues(USBRedirDevice *dev)
     }
 }
 
-static void usbredir_unrealize(USBDevice *udev, Error **errp)
+static void usbredir_unrealize(USBDevice *udev)
 {
     USBRedirDevice *dev = USB_REDIRECT(udev);
 
@@ -1463,7 +1481,6 @@ static void usbredir_unrealize(USBDevice *udev, Error **errp)
     qemu_bh_delete(dev->chardev_close_bh);
     qemu_bh_delete(dev->device_reject_bh);
 
-    timer_del(dev->attach_timer);
     timer_free(dev->attach_timer);
 
     usbredir_cleanup_device_queues(dev);
@@ -1989,6 +2006,23 @@ static void usbredir_control_packet(void *priv, uint64_t id,
             memcpy(dev->dev.data_buf, data, data_len);
         }
         p->actual_length = len;
+        /*
+         * If this is GET_DESCRIPTOR request for configuration descriptor,
+         * remove 'remote wakeup' flag from it to prevent idle power down
+         * in Windows guest
+         */
+        if (dev->suppress_remote_wake &&
+            control_packet->requesttype == USB_DIR_IN &&
+            control_packet->request == USB_REQ_GET_DESCRIPTOR &&
+            control_packet->value == (USB_DT_CONFIG << 8) &&
+            control_packet->index == 0 &&
+            /* bmAttributes field of config descriptor */
+            len > 7 && (dev->dev.data_buf[7] & USB_CFG_ATT_WAKEUP)) {
+                DPRINTF("Removed remote wake %04X:%04X\n",
+                    dev->device_info.vendor_id,
+                    dev->device_info.product_id);
+                dev->dev.data_buf[7] &= ~USB_CFG_ATT_WAKEUP;
+            }
         usb_generic_async_ctrl_complete(&dev->dev, p);
     }
     free(data);
@@ -2193,7 +2227,7 @@ static int usbredir_post_load(void *priv, int version_id)
 
 /* For usbredirparser migration */
 static int usbredir_put_parser(QEMUFile *f, void *priv, size_t unused,
-                               const VMStateField *field, QJSON *vmdesc)
+                               const VMStateField *field, JSONWriter *vmdesc)
 {
     USBRedirDevice *dev = priv;
     uint8_t *data;
@@ -2260,7 +2294,7 @@ static const VMStateInfo usbredir_parser_vmstate_info = {
 
 /* For buffered packets (iso/irq) queue migration */
 static int usbredir_put_bufpq(QEMUFile *f, void *priv, size_t unused,
-                              const VMStateField *field, QJSON *vmdesc)
+                              const VMStateField *field, JSONWriter *vmdesc)
 {
     struct endp_data *endp = priv;
     USBRedirDevice *dev = endp->dev;
@@ -2387,7 +2421,8 @@ static const VMStateDescription usbredir_ep_vmstate = {
 
 /* For PacketIdQueue migration */
 static int usbredir_put_packet_id_q(QEMUFile *f, void *priv, size_t unused,
-                                    const VMStateField *field, QJSON *vmdesc)
+                                    const VMStateField *field,
+                                    JSONWriter *vmdesc)
 {
     struct PacketIdQueue *q = priv;
     USBRedirDevice *dev = q->dev;
@@ -2530,6 +2565,8 @@ static Property usbredir_properties[] = {
     DEFINE_PROP_UINT8("debug", USBRedirDevice, debug, usbredirparser_warning),
     DEFINE_PROP_STRING("filter", USBRedirDevice, filter_str),
     DEFINE_PROP_BOOL("streams", USBRedirDevice, enable_streams, true),
+    DEFINE_PROP_BOOL("suppress-remote-wake", USBRedirDevice,
+                     suppress_remote_wake, true),
     DEFINE_PROP_END_OF_LIST(),
 };
 
@@ -2550,7 +2587,7 @@ static void usbredir_class_initfn(ObjectClass *klass, void *data)
     uc->alloc_streams  = usbredir_alloc_streams;
     uc->free_streams   = usbredir_free_streams;
     dc->vmsd           = &usbredir_vmstate;
-    dc->props          = usbredir_properties;
+    device_class_set_props(dc, usbredir_properties);
     set_bit(DEVICE_CATEGORY_MISC, dc->categories);
 }
 
@@ -2561,7 +2598,7 @@ static void usbredir_instance_init(Object *obj)
 
     device_add_bootindex_property(obj, &dev->bootindex,
                                   "bootindex", NULL,
-                                  &udev->qdev, NULL);
+                                  &udev->qdev);
 }
 
 static const TypeInfo usbredir_dev_info = {
@@ -2571,6 +2608,7 @@ static const TypeInfo usbredir_dev_info = {
     .class_init    = usbredir_class_initfn,
     .instance_init = usbredir_instance_init,
 };
+module_obj(TYPE_USB_REDIR);
 
 static void usbredir_register_types(void)
 {

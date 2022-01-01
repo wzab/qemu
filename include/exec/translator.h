@@ -19,7 +19,11 @@
  */
 
 
+#include "qemu/bswap.h"
 #include "exec/exec-all.h"
+#include "exec/cpu_ldst.h"
+#include "exec/plugin-gen.h"
+#include "exec/translate-all.h"
 #include "tcg/tcg.h"
 
 
@@ -64,13 +68,24 @@ typedef enum DisasJumpType {
  * Architecture-agnostic disassembly context.
  */
 typedef struct DisasContextBase {
-    TranslationBlock *tb;
+    const TranslationBlock *tb;
     target_ulong pc_first;
     target_ulong pc_next;
     DisasJumpType is_jmp;
     int num_insns;
     int max_insns;
     bool singlestep_enabled;
+#ifdef CONFIG_USER_ONLY
+    /*
+     * Guest address of the last byte of the last protected page.
+     *
+     * Pages containing the translated instructions are made non-writable in
+     * order to achieve consistency in case another thread is modifying the
+     * code while translate_insn() fetches the instruction bytes piecemeal.
+     * Such writer threads are blocked on mmap_lock() in page_unprotect().
+     */
+    target_ulong page_protect_end;
+#endif
 } DisasContextBase;
 
 /**
@@ -85,15 +100,6 @@ typedef struct DisasContextBase {
  *
  * @insn_start:
  *      Emit the tcg_gen_insn_start opcode.
- *
- * @breakpoint_check:
- *      When called, the breakpoint has already been checked to match the PC,
- *      but the target may decide the breakpoint missed the address
- *      (e.g., due to conditions encoded in their flags).  Return true to
- *      indicate that the breakpoint did hit, in which case no more breakpoints
- *      are checked.  If the breakpoint did hit, emit any code required to
- *      signal the exception, and set db->is_jmp as necessary to terminate
- *      the main loop.
  *
  * @translate_insn:
  *      Disassemble one instruction and set db->pc_next for the start
@@ -110,8 +116,6 @@ typedef struct TranslatorOps {
     void (*init_disas_context)(DisasContextBase *db, CPUState *cpu);
     void (*tb_start)(DisasContextBase *db, CPUState *cpu);
     void (*insn_start)(DisasContextBase *db, CPUState *cpu);
-    bool (*breakpoint_check)(DisasContextBase *db, CPUState *cpu,
-                             const CPUBreakpoint *bp);
     void (*translate_insn)(DisasContextBase *db, CPUState *cpu);
     void (*tb_stop)(DisasContextBase *db, CPUState *cpu);
     void (*disas_log)(const DisasContextBase *db, CPUState *cpu);
@@ -142,4 +146,45 @@ void translator_loop(const TranslatorOps *ops, DisasContextBase *db,
 
 void translator_loop_temp_check(DisasContextBase *db);
 
-#endif /* EXEC__TRANSLATOR_H */
+/**
+ * translator_use_goto_tb
+ * @db: Disassembly context
+ * @dest: target pc of the goto
+ *
+ * Return true if goto_tb is allowed between the current TB
+ * and the destination PC.
+ */
+bool translator_use_goto_tb(DisasContextBase *db, target_ulong dest);
+
+/*
+ * Translator Load Functions
+ *
+ * These are intended to replace the direct usage of the cpu_ld*_code
+ * functions and are mandatory for front-ends that have been migrated
+ * to the common translator_loop. These functions are only intended
+ * to be called from the translation stage and should not be called
+ * from helper functions. Those functions should be converted to encode
+ * the relevant information at translation time.
+ */
+
+#define GEN_TRANSLATOR_LD(fullname, type, load_fn, swap_fn)             \
+    type fullname ## _swap(CPUArchState *env, DisasContextBase *dcbase, \
+                           abi_ptr pc, bool do_swap);                   \
+    static inline type fullname(CPUArchState *env,                      \
+                                DisasContextBase *dcbase, abi_ptr pc)   \
+    {                                                                   \
+        return fullname ## _swap(env, dcbase, pc, false);               \
+    }
+
+#define FOR_EACH_TRANSLATOR_LD(F)                                       \
+    F(translator_ldub, uint8_t, cpu_ldub_code, /* no swap */)           \
+    F(translator_ldsw, int16_t, cpu_ldsw_code, bswap16)                 \
+    F(translator_lduw, uint16_t, cpu_lduw_code, bswap16)                \
+    F(translator_ldl, uint32_t, cpu_ldl_code, bswap32)                  \
+    F(translator_ldq, uint64_t, cpu_ldq_code, bswap64)
+
+FOR_EACH_TRANSLATOR_LD(GEN_TRANSLATOR_LD)
+
+#undef GEN_TRANSLATOR_LD
+
+#endif  /* EXEC__TRANSLATOR_H */

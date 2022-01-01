@@ -18,7 +18,7 @@
  */
 
 #include "qemu/osdep.h"
-#include "qemu-common.h"
+#include "qemu/datadir.h"
 #include "qapi/error.h"
 #include "qemu/error-report.h"
 #include "qemu/units.h"
@@ -26,7 +26,6 @@
 #include "sysemu/numa.h"
 #include "sysemu/runstate.h"
 #include "sysemu/sysemu.h"
-#include "exec/address-spaces.h"
 #include "exec/hwaddr.h"
 #include "kvm_arm.h"
 #include "hw/arm/boot.h"
@@ -39,7 +38,10 @@
 #include "hw/pci-host/gpex.h"
 #include "hw/qdev-properties.h"
 #include "hw/usb.h"
+#include "hw/char/pl011.h"
+#include "hw/watchdog/sbsa_gwdt.h"
 #include "net/net.h"
+#include "qom/object.h"
 
 #define RAMLIMIT_GB 8192
 #define RAMLIMIT_BYTES (RAMLIMIT_GB * GiB)
@@ -61,6 +63,10 @@ enum {
     SBSA_CPUPERIPHS,
     SBSA_GIC_DIST,
     SBSA_GIC_REDIST,
+    SBSA_SECURE_EC,
+    SBSA_GWDT_WS0,
+    SBSA_GWDT_REFRESH,
+    SBSA_GWDT_CONTROL,
     SBSA_SMMU,
     SBSA_UART,
     SBSA_RTC,
@@ -77,24 +83,19 @@ enum {
     SBSA_EHCI,
 };
 
-typedef struct MemMapEntry {
-    hwaddr base;
-    hwaddr size;
-} MemMapEntry;
-
-typedef struct {
+struct SBSAMachineState {
     MachineState parent;
     struct arm_boot_info bootinfo;
     int smp_cpus;
     void *fdt;
     int fdt_size;
     int psci_conduit;
+    DeviceState *gic;
     PFlashCFI01 *flash[2];
-} SBSAMachineState;
+};
 
 #define TYPE_SBSA_MACHINE   MACHINE_TYPE_NAME("sbsa-ref")
-#define SBSA_MACHINE(obj) \
-    OBJECT_CHECK(SBSAMachineState, (obj), TYPE_SBSA_MACHINE)
+OBJECT_DECLARE_SIMPLE_TYPE(SBSAMachineState, SBSA_MACHINE)
 
 static const MemMapEntry sbsa_ref_memmap[] = {
     /* 512M boot ROM */
@@ -105,6 +106,9 @@ static const MemMapEntry sbsa_ref_memmap[] = {
     [SBSA_CPUPERIPHS] =         { 0x40000000, 0x00040000 },
     [SBSA_GIC_DIST] =           { 0x40060000, 0x00010000 },
     [SBSA_GIC_REDIST] =         { 0x40080000, 0x04000000 },
+    [SBSA_SECURE_EC] =          { 0x50000000, 0x00001000 },
+    [SBSA_GWDT_REFRESH] =       { 0x50010000, 0x00001000 },
+    [SBSA_GWDT_CONTROL] =       { 0x50011000, 0x00001000 },
     [SBSA_UART] =               { 0x60000000, 0x00001000 },
     [SBSA_RTC] =                { 0x60010000, 0x00001000 },
     [SBSA_GPIO] =               { 0x60020000, 0x00001000 },
@@ -134,7 +138,33 @@ static const int sbsa_ref_irqmap[] = {
     [SBSA_SECURE_UART_MM] = 9,
     [SBSA_AHCI] = 10,
     [SBSA_EHCI] = 11,
+    [SBSA_SMMU] = 12, /* ... to 15 */
+    [SBSA_GWDT_WS0] = 16,
 };
+
+static const char * const valid_cpus[] = {
+    ARM_CPU_TYPE_NAME("cortex-a57"),
+    ARM_CPU_TYPE_NAME("cortex-a72"),
+    ARM_CPU_TYPE_NAME("max"),
+};
+
+static bool cpu_type_valid(const char *cpu)
+{
+    int i;
+
+    for (i = 0; i < ARRAY_SIZE(valid_cpus); i++) {
+        if (strcmp(cpu, valid_cpus[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static uint64_t sbsa_ref_cpu_mp_affinity(SBSAMachineState *sms, int idx)
+{
+    uint8_t clustersz = ARM_DEFAULT_CPUS_PER_CLUSTER;
+    return arm_cpu_mp_affinity(idx, clustersz);
+}
 
 /*
  * Firmware on this machine only uses ACPI table to load OS, these limited
@@ -181,14 +211,31 @@ static void create_fdt(SBSAMachineState *sms)
         g_free(matrix);
     }
 
+    /*
+     * From Documentation/devicetree/bindings/arm/cpus.yaml
+     *  On ARM v8 64-bit systems this property is required
+     *    and matches the MPIDR_EL1 register affinity bits.
+     *
+     *    * If cpus node's #address-cells property is set to 2
+     *
+     *      The first reg cell bits [7:0] must be set to
+     *      bits [39:32] of MPIDR_EL1.
+     *
+     *      The second reg cell bits [23:0] must be set to
+     *      bits [23:0] of MPIDR_EL1.
+     */
     qemu_fdt_add_subnode(sms->fdt, "/cpus");
+    qemu_fdt_setprop_cell(sms->fdt, "/cpus", "#address-cells", 2);
+    qemu_fdt_setprop_cell(sms->fdt, "/cpus", "#size-cells", 0x0);
 
     for (cpu = sms->smp_cpus - 1; cpu >= 0; cpu--) {
         char *nodename = g_strdup_printf("/cpus/cpu@%d", cpu);
         ARMCPU *armcpu = ARM_CPU(qemu_get_cpu(cpu));
         CPUState *cs = CPU(armcpu);
+        uint64_t mpidr = sbsa_ref_cpu_mp_affinity(sms, cpu);
 
         qemu_fdt_add_subnode(sms->fdt, nodename);
+        qemu_fdt_setprop_u64(sms->fdt, nodename, "reg", mpidr);
 
         if (ms->possible_cpus->cpus[cs->cpu_index].props.has_node_id) {
             qemu_fdt_setprop_cell(sms->fdt, nodename, "numa-node-id",
@@ -209,7 +256,7 @@ static PFlashCFI01 *sbsa_flash_create1(SBSAMachineState *sms,
      * Create a single flash device.  We use the same parameters as
      * the flash devices on the Versatile Express board.
      */
-    DeviceState *dev = qdev_create(NULL, TYPE_PFLASH_CFI01);
+    DeviceState *dev = qdev_new(TYPE_PFLASH_CFI01);
 
     qdev_prop_set_uint64(dev, "sector-length", SBSA_FLASH_SECTOR_SIZE);
     qdev_prop_set_uint8(dev, "width", 4);
@@ -220,10 +267,9 @@ static PFlashCFI01 *sbsa_flash_create1(SBSAMachineState *sms,
     qdev_prop_set_uint16(dev, "id2", 0x00);
     qdev_prop_set_uint16(dev, "id3", 0x00);
     qdev_prop_set_string(dev, "name", name);
-    object_property_add_child(OBJECT(sms), name, OBJECT(dev),
-                              &error_abort);
+    object_property_add_child(OBJECT(sms), name, OBJECT(dev));
     object_property_add_alias(OBJECT(sms), alias_prop_name,
-                              OBJECT(dev), "drive", &error_abort);
+                              OBJECT(dev), "drive");
     return PFLASH_CFI01(dev);
 }
 
@@ -239,10 +285,10 @@ static void sbsa_flash_map1(PFlashCFI01 *flash,
 {
     DeviceState *dev = DEVICE(flash);
 
-    assert(size % SBSA_FLASH_SECTOR_SIZE == 0);
+    assert(QEMU_IS_ALIGNED(size, SBSA_FLASH_SECTOR_SIZE));
     assert(size / SBSA_FLASH_SECTOR_SIZE <= UINT32_MAX);
     qdev_prop_set_uint32(dev, "num-blocks", size / SBSA_FLASH_SECTOR_SIZE);
-    qdev_init_nofail(dev);
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
 
     memory_region_add_subregion(sysmem, base,
                                 sysbus_mmio_get_region(SYS_BUS_DEVICE(dev),
@@ -272,6 +318,7 @@ static bool sbsa_firmware_init(SBSAMachineState *sms,
                                MemoryRegion *sysmem,
                                MemoryRegion *secure_sysmem)
 {
+    const char *bios_name;
     int i;
     BlockBackend *pflash_blk0;
 
@@ -285,6 +332,7 @@ static bool sbsa_firmware_init(SBSAMachineState *sms,
 
     pflash_blk0 = pflash_cfi01_get_blk(sms->flash[0]);
 
+    bios_name = MACHINE(sms)->firmware;
     if (bios_name) {
         char *fname;
         MemoryRegion *mr;
@@ -328,10 +376,9 @@ static void create_secure_ram(SBSAMachineState *sms,
     memory_region_add_subregion(secure_sysmem, base, secram);
 }
 
-static void create_gic(SBSAMachineState *sms, qemu_irq *pic)
+static void create_gic(SBSAMachineState *sms)
 {
     unsigned int smp_cpus = MACHINE(sms)->smp.cpus;
-    DeviceState *gicdev;
     SysBusDevice *gicbusdev;
     const char *gictype;
     uint32_t redist0_capacity, redist0_count;
@@ -339,25 +386,25 @@ static void create_gic(SBSAMachineState *sms, qemu_irq *pic)
 
     gictype = gicv3_class_name();
 
-    gicdev = qdev_create(NULL, gictype);
-    qdev_prop_set_uint32(gicdev, "revision", 3);
-    qdev_prop_set_uint32(gicdev, "num-cpu", smp_cpus);
+    sms->gic = qdev_new(gictype);
+    qdev_prop_set_uint32(sms->gic, "revision", 3);
+    qdev_prop_set_uint32(sms->gic, "num-cpu", smp_cpus);
     /*
      * Note that the num-irq property counts both internal and external
      * interrupts; there are always 32 of the former (mandated by GIC spec).
      */
-    qdev_prop_set_uint32(gicdev, "num-irq", NUM_IRQS + 32);
-    qdev_prop_set_bit(gicdev, "has-security-extensions", true);
+    qdev_prop_set_uint32(sms->gic, "num-irq", NUM_IRQS + 32);
+    qdev_prop_set_bit(sms->gic, "has-security-extensions", true);
 
     redist0_capacity =
                 sbsa_ref_memmap[SBSA_GIC_REDIST].size / GICV3_REDIST_SIZE;
     redist0_count = MIN(smp_cpus, redist0_capacity);
 
-    qdev_prop_set_uint32(gicdev, "len-redist-region-count", 1);
-    qdev_prop_set_uint32(gicdev, "redist-region-count[0]", redist0_count);
+    qdev_prop_set_uint32(sms->gic, "len-redist-region-count", 1);
+    qdev_prop_set_uint32(sms->gic, "redist-region-count[0]", redist0_count);
 
-    qdev_init_nofail(gicdev);
-    gicbusdev = SYS_BUS_DEVICE(gicdev);
+    gicbusdev = SYS_BUS_DEVICE(sms->gic);
+    sysbus_realize_and_unref(gicbusdev, &error_fatal);
     sysbus_mmio_map(gicbusdev, 0, sbsa_ref_memmap[SBSA_GIC_DIST].base);
     sysbus_mmio_map(gicbusdev, 1, sbsa_ref_memmap[SBSA_GIC_REDIST].base);
 
@@ -383,15 +430,15 @@ static void create_gic(SBSAMachineState *sms, qemu_irq *pic)
 
         for (irq = 0; irq < ARRAY_SIZE(timer_irq); irq++) {
             qdev_connect_gpio_out(cpudev, irq,
-                                  qdev_get_gpio_in(gicdev,
+                                  qdev_get_gpio_in(sms->gic,
                                                    ppibase + timer_irq[irq]));
         }
 
         qdev_connect_gpio_out_named(cpudev, "gicv3-maintenance-interrupt", 0,
-                                    qdev_get_gpio_in(gicdev, ppibase
+                                    qdev_get_gpio_in(sms->gic, ppibase
                                                      + ARCH_GIC_MAINT_IRQ));
         qdev_connect_gpio_out_named(cpudev, "pmu-interrupt", 0,
-                                    qdev_get_gpio_in(gicdev, ppibase
+                                    qdev_get_gpio_in(sms->gic, ppibase
                                                      + VIRTUAL_PMU_IRQ));
 
         sysbus_connect_irq(gicbusdev, i, qdev_get_gpio_in(cpudev, ARM_CPU_IRQ));
@@ -402,33 +449,43 @@ static void create_gic(SBSAMachineState *sms, qemu_irq *pic)
         sysbus_connect_irq(gicbusdev, i + 3 * smp_cpus,
                            qdev_get_gpio_in(cpudev, ARM_CPU_VFIQ));
     }
-
-    for (i = 0; i < NUM_IRQS; i++) {
-        pic[i] = qdev_get_gpio_in(gicdev, i);
-    }
 }
 
-static void create_uart(const SBSAMachineState *sms, qemu_irq *pic, int uart,
+static void create_uart(const SBSAMachineState *sms, int uart,
                         MemoryRegion *mem, Chardev *chr)
 {
     hwaddr base = sbsa_ref_memmap[uart].base;
     int irq = sbsa_ref_irqmap[uart];
-    DeviceState *dev = qdev_create(NULL, "pl011");
+    DeviceState *dev = qdev_new(TYPE_PL011);
     SysBusDevice *s = SYS_BUS_DEVICE(dev);
 
     qdev_prop_set_chr(dev, "chardev", chr);
-    qdev_init_nofail(dev);
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
     memory_region_add_subregion(mem, base,
                                 sysbus_mmio_get_region(s, 0));
-    sysbus_connect_irq(s, 0, pic[irq]);
+    sysbus_connect_irq(s, 0, qdev_get_gpio_in(sms->gic, irq));
 }
 
-static void create_rtc(const SBSAMachineState *sms, qemu_irq *pic)
+static void create_rtc(const SBSAMachineState *sms)
 {
     hwaddr base = sbsa_ref_memmap[SBSA_RTC].base;
     int irq = sbsa_ref_irqmap[SBSA_RTC];
 
-    sysbus_create_simple("pl031", base, pic[irq]);
+    sysbus_create_simple("pl031", base, qdev_get_gpio_in(sms->gic, irq));
+}
+
+static void create_wdt(const SBSAMachineState *sms)
+{
+    hwaddr rbase = sbsa_ref_memmap[SBSA_GWDT_REFRESH].base;
+    hwaddr cbase = sbsa_ref_memmap[SBSA_GWDT_CONTROL].base;
+    DeviceState *dev = qdev_new(TYPE_WDT_SBSA);
+    SysBusDevice *s = SYS_BUS_DEVICE(dev);
+    int irq = sbsa_ref_irqmap[SBSA_GWDT_WS0];
+
+    sysbus_realize_and_unref(s, &error_fatal);
+    sysbus_mmio_map(s, 0, rbase);
+    sysbus_mmio_map(s, 1, cbase);
+    sysbus_connect_irq(s, 0, qdev_get_gpio_in(sms->gic, irq));
 }
 
 static DeviceState *gpio_key_dev;
@@ -442,13 +499,14 @@ static Notifier sbsa_ref_powerdown_notifier = {
     .notify = sbsa_ref_powerdown_req
 };
 
-static void create_gpio(const SBSAMachineState *sms, qemu_irq *pic)
+static void create_gpio(const SBSAMachineState *sms)
 {
     DeviceState *pl061_dev;
     hwaddr base = sbsa_ref_memmap[SBSA_GPIO].base;
     int irq = sbsa_ref_irqmap[SBSA_GPIO];
 
-    pl061_dev = sysbus_create_simple("pl061", base, pic[irq]);
+    pl061_dev = sysbus_create_simple("pl061", base,
+                                     qdev_get_gpio_in(sms->gic, irq));
 
     gpio_key_dev = sysbus_create_simple("gpio-key", -1,
                                         qdev_get_gpio_in(pl061_dev, 3));
@@ -457,7 +515,7 @@ static void create_gpio(const SBSAMachineState *sms, qemu_irq *pic)
     qemu_register_powerdown_notifier(&sbsa_ref_powerdown_notifier);
 }
 
-static void create_ahci(const SBSAMachineState *sms, qemu_irq *pic)
+static void create_ahci(const SBSAMachineState *sms)
 {
     hwaddr base = sbsa_ref_memmap[SBSA_AHCI].base;
     int irq = sbsa_ref_irqmap[SBSA_AHCI];
@@ -467,11 +525,11 @@ static void create_ahci(const SBSAMachineState *sms, qemu_irq *pic)
     AHCIState *ahci;
     int i;
 
-    dev = qdev_create(NULL, "sysbus-ahci");
+    dev = qdev_new("sysbus-ahci");
     qdev_prop_set_uint32(dev, "num-ports", NUM_SATA_PORTS);
-    qdev_init_nofail(dev);
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
-    sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, pic[irq]);
+    sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, qdev_get_gpio_in(sms->gic, irq));
 
     sysahci = SYSBUS_AHCI(dev);
     ahci = &sysahci->ahci;
@@ -484,34 +542,35 @@ static void create_ahci(const SBSAMachineState *sms, qemu_irq *pic)
     }
 }
 
-static void create_ehci(const SBSAMachineState *sms, qemu_irq *pic)
+static void create_ehci(const SBSAMachineState *sms)
 {
     hwaddr base = sbsa_ref_memmap[SBSA_EHCI].base;
     int irq = sbsa_ref_irqmap[SBSA_EHCI];
 
-    sysbus_create_simple("platform-ehci-usb", base, pic[irq]);
+    sysbus_create_simple("platform-ehci-usb", base,
+                         qdev_get_gpio_in(sms->gic, irq));
 }
 
-static void create_smmu(const SBSAMachineState *sms, qemu_irq *pic,
-                        PCIBus *bus)
+static void create_smmu(const SBSAMachineState *sms, PCIBus *bus)
 {
     hwaddr base = sbsa_ref_memmap[SBSA_SMMU].base;
     int irq =  sbsa_ref_irqmap[SBSA_SMMU];
     DeviceState *dev;
     int i;
 
-    dev = qdev_create(NULL, "arm-smmuv3");
+    dev = qdev_new("arm-smmuv3");
 
-    object_property_set_link(OBJECT(dev), OBJECT(bus), "primary-bus",
+    object_property_set_link(OBJECT(dev), "primary-bus", OBJECT(bus),
                              &error_abort);
-    qdev_init_nofail(dev);
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
     for (i = 0; i < NUM_SMMU_IRQS; i++) {
-        sysbus_connect_irq(SYS_BUS_DEVICE(dev), i, pic[irq + i]);
+        sysbus_connect_irq(SYS_BUS_DEVICE(dev), i,
+                           qdev_get_gpio_in(sms->gic, irq + i));
     }
 }
 
-static void create_pcie(SBSAMachineState *sms, qemu_irq *pic)
+static void create_pcie(SBSAMachineState *sms)
 {
     hwaddr base_ecam = sbsa_ref_memmap[SBSA_PCIE_ECAM].base;
     hwaddr size_ecam = sbsa_ref_memmap[SBSA_PCIE_ECAM].size;
@@ -527,8 +586,8 @@ static void create_pcie(SBSAMachineState *sms, qemu_irq *pic)
     PCIHostState *pci;
     int i;
 
-    dev = qdev_create(NULL, TYPE_GPEX_HOST);
-    qdev_init_nofail(dev);
+    dev = qdev_new(TYPE_GPEX_HOST);
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
 
     /* Map ECAM space */
     ecam_alias = g_new0(MemoryRegion, 1);
@@ -555,7 +614,8 @@ static void create_pcie(SBSAMachineState *sms, qemu_irq *pic)
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 2, base_pio);
 
     for (i = 0; i < GPEX_NUM_IRQS; i++) {
-        sysbus_connect_irq(SYS_BUS_DEVICE(dev), i, pic[irq + i]);
+        sysbus_connect_irq(SYS_BUS_DEVICE(dev), i,
+                           qdev_get_gpio_in(sms->gic, irq + i));
         gpex_set_irq_num(GPEX_HOST(dev), i, irq + i);
     }
 
@@ -574,7 +634,7 @@ static void create_pcie(SBSAMachineState *sms, qemu_irq *pic)
 
     pci_create_simple(pci->bus, -1, "VGA");
 
-    create_smmu(sms, pic, pci->bus);
+    create_smmu(sms, pci->bus);
 }
 
 static void *sbsa_ref_dtb(const struct arm_boot_info *binfo, int *fdt_size)
@@ -586,6 +646,16 @@ static void *sbsa_ref_dtb(const struct arm_boot_info *binfo, int *fdt_size)
     return board->fdt;
 }
 
+static void create_secure_ec(MemoryRegion *mem)
+{
+    hwaddr base = sbsa_ref_memmap[SBSA_SECURE_EC].base;
+    DeviceState *dev = qdev_new("sbsa-ec");
+    SysBusDevice *s = SYS_BUS_DEVICE(dev);
+
+    memory_region_add_subregion(mem, base,
+                                sysbus_mmio_get_region(s, 0));
+}
+
 static void sbsa_ref_init(MachineState *machine)
 {
     unsigned int smp_cpus = machine->smp.cpus;
@@ -594,15 +664,12 @@ static void sbsa_ref_init(MachineState *machine)
     MachineClass *mc = MACHINE_GET_CLASS(machine);
     MemoryRegion *sysmem = get_system_memory();
     MemoryRegion *secure_sysmem = g_new(MemoryRegion, 1);
-    MemoryRegion *ram = g_new(MemoryRegion, 1);
     bool firmware_loaded;
     const CPUArchIdList *possible_cpus;
     int n, sbsa_max_cpus;
-    qemu_irq pic[NUM_IRQS];
 
-    if (strcmp(machine->cpu_type, ARM_CPU_TYPE_NAME("cortex-a57"))) {
-        error_report("sbsa-ref: CPU type other than the built-in "
-                     "cortex-a57 not supported");
+    if (!cpu_type_valid(machine->cpu_type)) {
+        error_report("sbsa-ref: CPU type %s not supported", machine->cpu_type);
         exit(1);
     }
 
@@ -622,13 +689,6 @@ static void sbsa_ref_init(MachineState *machine)
     memory_region_add_subregion_overlap(secure_sysmem, 0, sysmem, -1);
 
     firmware_loaded = sbsa_firmware_init(sms, sysmem, secure_sysmem);
-
-    if (machine->kernel_filename && firmware_loaded) {
-        error_report("sbsa-ref: No fw_cfg device on this machine, "
-                     "so -kernel option is not supported when firmware loaded, "
-                     "please load OS from hard disk instead");
-        exit(1);
-    }
 
     /*
      * This machine has EL3 enabled, external firmware should supply PSCI
@@ -662,8 +722,8 @@ static void sbsa_ref_init(MachineState *machine)
         }
 
         cpuobj = object_new(possible_cpus->cpus[n].type);
-        object_property_set_int(cpuobj, possible_cpus->cpus[n].arch_id,
-                                "mp-affinity", NULL);
+        object_property_set_int(cpuobj, "mp-affinity",
+                                possible_cpus->cpus[n].arch_id, NULL);
 
         cs = CPU(cpuobj);
         cs->cpu_index = n;
@@ -671,46 +731,49 @@ static void sbsa_ref_init(MachineState *machine)
         numa_cpu_pre_plug(&possible_cpus->cpus[cs->cpu_index], DEVICE(cpuobj),
                           &error_fatal);
 
-        if (object_property_find(cpuobj, "reset-cbar", NULL)) {
-            object_property_set_int(cpuobj,
+        if (object_property_find(cpuobj, "reset-cbar")) {
+            object_property_set_int(cpuobj, "reset-cbar",
                                     sbsa_ref_memmap[SBSA_CPUPERIPHS].base,
-                                    "reset-cbar", &error_abort);
+                                    &error_abort);
         }
 
-        object_property_set_link(cpuobj, OBJECT(sysmem), "memory",
+        object_property_set_link(cpuobj, "memory", OBJECT(sysmem),
                                  &error_abort);
 
-        object_property_set_link(cpuobj, OBJECT(secure_sysmem),
-                                 "secure-memory", &error_abort);
+        object_property_set_link(cpuobj, "secure-memory",
+                                 OBJECT(secure_sysmem), &error_abort);
 
-        object_property_set_bool(cpuobj, true, "realized", &error_fatal);
+        qdev_realize(DEVICE(cpuobj), NULL, &error_fatal);
         object_unref(cpuobj);
     }
 
-    memory_region_allocate_system_memory(ram, NULL, "sbsa-ref.ram",
-                                         machine->ram_size);
-    memory_region_add_subregion(sysmem, sbsa_ref_memmap[SBSA_MEM].base, ram);
+    memory_region_add_subregion(sysmem, sbsa_ref_memmap[SBSA_MEM].base,
+                                machine->ram);
 
     create_fdt(sms);
 
     create_secure_ram(sms, secure_sysmem);
 
-    create_gic(sms, pic);
+    create_gic(sms);
 
-    create_uart(sms, pic, SBSA_UART, sysmem, serial_hd(0));
-    create_uart(sms, pic, SBSA_SECURE_UART, secure_sysmem, serial_hd(1));
+    create_uart(sms, SBSA_UART, sysmem, serial_hd(0));
+    create_uart(sms, SBSA_SECURE_UART, secure_sysmem, serial_hd(1));
     /* Second secure UART for RAS and MM from EL0 */
-    create_uart(sms, pic, SBSA_SECURE_UART_MM, secure_sysmem, serial_hd(2));
+    create_uart(sms, SBSA_SECURE_UART_MM, secure_sysmem, serial_hd(2));
 
-    create_rtc(sms, pic);
+    create_rtc(sms);
 
-    create_gpio(sms, pic);
+    create_wdt(sms);
 
-    create_ahci(sms, pic);
+    create_gpio(sms);
 
-    create_ehci(sms, pic);
+    create_ahci(sms);
 
-    create_pcie(sms, pic);
+    create_ehci(sms);
+
+    create_pcie(sms);
+
+    create_secure_ec(secure_sysmem);
 
     sms->bootinfo.ram_size = machine->ram_size;
     sms->bootinfo.nb_cpus = smp_cpus;
@@ -719,12 +782,6 @@ static void sbsa_ref_init(MachineState *machine)
     sms->bootinfo.get_dtb = sbsa_ref_dtb;
     sms->bootinfo.firmware_loaded = firmware_loaded;
     arm_load_kernel(ARM_CPU(first_cpu), machine, &sms->bootinfo);
-}
-
-static uint64_t sbsa_ref_cpu_mp_affinity(SBSAMachineState *sms, int idx)
-{
-    uint8_t clustersz = ARM_DEFAULT_CPUS_PER_CLUSTER;
-    return arm_cpu_mp_affinity(idx, clustersz);
 }
 
 static const CPUArchIdList *sbsa_ref_possible_cpu_arch_ids(MachineState *ms)
@@ -787,11 +844,11 @@ static void sbsa_ref_class_init(ObjectClass *oc, void *data)
     mc->block_default_type = IF_IDE;
     mc->no_cdrom = 1;
     mc->default_ram_size = 1 * GiB;
+    mc->default_ram_id = "sbsa-ref.ram";
     mc->default_cpus = 4;
     mc->possible_cpu_arch_ids = sbsa_ref_possible_cpu_arch_ids;
     mc->cpu_index_to_instance_props = sbsa_ref_cpu_index_to_props;
     mc->get_default_cpu_node_id = sbsa_ref_get_default_cpu_node_id;
-    mc->numa_mem_supported = true;
 }
 
 static const TypeInfo sbsa_ref_info = {

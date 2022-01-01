@@ -1,2 +1,0 @@
-tests/qapi-schema/flat-union-base-any.json: In union 'TestUnion':
-tests/qapi-schema/flat-union-base-any.json:8: 'base' requires a struct type, built-in type 'any' isn't

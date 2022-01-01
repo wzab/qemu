@@ -237,7 +237,7 @@ static void arm_mptimer_reset(DeviceState *dev)
     }
 }
 
-static void arm_mptimer_init_with_bh(Object *obj)
+static void arm_mptimer_init(Object *obj)
 {
     ARMMPTimerState *s = ARM_MPTIMER(obj);
 
@@ -312,14 +312,14 @@ static void arm_mptimer_class_init(ObjectClass *klass, void *data)
     dc->realize = arm_mptimer_realize;
     dc->vmsd = &vmstate_arm_mptimer;
     dc->reset = arm_mptimer_reset;
-    dc->props = arm_mptimer_properties;
+    device_class_set_props(dc, arm_mptimer_properties);
 }
 
 static const TypeInfo arm_mptimer_info = {
     .name          = TYPE_ARM_MPTIMER,
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(ARMMPTimerState),
-    .instance_init = arm_mptimer_init_with_bh,
+    .instance_init = arm_mptimer_init,
     .class_init    = arm_mptimer_class_init,
 };
 

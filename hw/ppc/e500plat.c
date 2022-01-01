@@ -48,7 +48,9 @@ static void e500plat_machine_device_plug_cb(HotplugHandler *hotplug_dev,
     PPCE500MachineState *pms = PPCE500_MACHINE(hotplug_dev);
 
     if (pms->pbus_dev) {
-        if (object_dynamic_cast(OBJECT(dev), TYPE_SYS_BUS_DEVICE)) {
+        MachineClass *mc = MACHINE_GET_CLASS(pms);
+
+        if (device_is_dynamic_sysbus(mc, dev)) {
             platform_bus_link_device(pms->pbus_dev, SYS_BUS_DEVICE(dev));
         }
     }
@@ -58,7 +60,9 @@ static
 HotplugHandler *e500plat_machine_get_hotpug_handler(MachineState *machine,
                                                     DeviceState *dev)
 {
-    if (object_dynamic_cast(OBJECT(dev), TYPE_SYS_BUS_DEVICE)) {
+    MachineClass *mc = MACHINE_GET_CLASS(machine);
+
+    if (device_is_dynamic_sysbus(mc, dev)) {
         return HOTPLUG_HANDLER(machine);
     }
 
@@ -97,6 +101,7 @@ static void e500plat_machine_class_init(ObjectClass *oc, void *data)
     mc->init = e500plat_init;
     mc->max_cpus = 32;
     mc->default_cpu_type = POWERPC_CPU_TYPE_NAME("e500v2_v30");
+    mc->default_ram_id = "mpc8544ds.ram";
     machine_class_allow_dynamic_sysbus_dev(mc, TYPE_ETSEC_COMMON);
  }
 

@@ -26,17 +26,17 @@
 #include "qapi/error.h"
 #include "hw/ipmi/ipmi_bt.h"
 #include "hw/pci/pci.h"
+#include "qom/object.h"
 
 #define TYPE_PCI_IPMI_BT "pci-ipmi-bt"
-#define PCI_IPMI_BT(obj) OBJECT_CHECK(PCIIPMIBTDevice, (obj), \
-                                       TYPE_PCI_IPMI_BT)
+OBJECT_DECLARE_SIMPLE_TYPE(PCIIPMIBTDevice, PCI_IPMI_BT)
 
-typedef struct PCIIPMIBTDevice {
+struct PCIIPMIBTDevice {
     PCIDevice dev;
     IPMIBT bt;
     bool irq_enabled;
     uint32_t uuid;
-} PCIIPMIBTDevice;
+};
 
 static void pci_ipmi_raise_irq(IPMIBT *ik)
 {
@@ -54,6 +54,7 @@ static void pci_ipmi_lower_irq(IPMIBT *ik)
 
 static void pci_ipmi_bt_realize(PCIDevice *pd, Error **errp)
 {
+    Error *err = NULL;
     PCIIPMIBTDevice *pik = PCI_IPMI_BT(pd);
     IPMIInterface *ii = IPMI_INTERFACE(pd);
     IPMIInterfaceClass *iic = IPMI_INTERFACE_GET_CLASS(ii);
@@ -74,8 +75,9 @@ static void pci_ipmi_bt_realize(PCIDevice *pd, Error **errp)
     pik->bt.raise_irq = pci_ipmi_raise_irq;
     pik->bt.lower_irq = pci_ipmi_lower_irq;
 
-    iic->init(ii, 8, errp);
-    if (*errp) {
+    iic->init(ii, 8, &err);
+    if (err) {
+        error_propagate(errp, err);
         return;
     }
     pci_register_bar(pd, 0, PCI_BASE_ADDRESS_SPACE_IO, &pik->bt.io);

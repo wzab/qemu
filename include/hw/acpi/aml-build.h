@@ -4,15 +4,13 @@
 #include "hw/acpi/acpi-defs.h"
 #include "hw/acpi/bios-linker-loader.h"
 
-/* Reserve RAM space for tables: add another order of magnitude. */
-#define ACPI_BUILD_TABLE_MAX_SIZE         0x200000
-
 #define ACPI_BUILD_APPNAME6 "BOCHS "
-#define ACPI_BUILD_APPNAME4 "BXPC"
+#define ACPI_BUILD_APPNAME8 "BXPC    "
 
 #define ACPI_BUILD_TABLE_FILE "etc/acpi/tables"
 #define ACPI_BUILD_RSDP_FILE "etc/acpi/rsdp"
 #define ACPI_BUILD_TPMLOG_FILE "etc/tpm/log"
+#define ACPI_BUILD_LOADER_FILE "etc/table-loader"
 
 #define AML_NOTIFY_METHOD "NTFY"
 
@@ -32,7 +30,6 @@ struct Aml {
     uint8_t op;
     AmlBlockFlags block_flags;
 };
-typedef struct Aml Aml;
 
 typedef enum {
     AML_COMPATIBILITY = 0,
@@ -220,8 +217,23 @@ struct AcpiBuildTables {
     GArray *rsdp;
     GArray *tcpalog;
     GArray *vmgenid;
+    GArray *hardware_errors;
     BIOSLinker *linker;
 } AcpiBuildTables;
+
+typedef
+struct CrsRangeEntry {
+    uint64_t base;
+    uint64_t limit;
+} CrsRangeEntry;
+
+typedef
+struct CrsRangeSet {
+    GPtrArray *io_ranges;
+    GPtrArray *mem_ranges;
+    GPtrArray *mem_64bit_ranges;
+} CrsRangeSet;
+
 
 /*
  * ACPI 5.0: 6.4.3.8.2 Serial Bus Connection Descriptors
@@ -286,9 +298,11 @@ Aml *aml_arg(int pos);
 Aml *aml_to_integer(Aml *arg);
 Aml *aml_to_hexstring(Aml *src, Aml *dst);
 Aml *aml_to_buffer(Aml *src, Aml *dst);
+Aml *aml_to_decimalstring(Aml *src, Aml *dst);
 Aml *aml_store(Aml *val, Aml *target);
 Aml *aml_and(Aml *arg1, Aml *arg2, Aml *dst);
 Aml *aml_or(Aml *arg1, Aml *arg2, Aml *dst);
+Aml *aml_land(Aml *arg1, Aml *arg2);
 Aml *aml_lor(Aml *arg1, Aml *arg2);
 Aml *aml_shiftleft(Aml *arg1, Aml *count);
 Aml *aml_shiftright(Aml *arg1, Aml *count, Aml *dst);
@@ -299,6 +313,7 @@ Aml *aml_increment(Aml *arg);
 Aml *aml_decrement(Aml *arg);
 Aml *aml_index(Aml *arg1, Aml *idx);
 Aml *aml_notify(Aml *arg1, Aml *arg2);
+Aml *aml_break(void);
 Aml *aml_call0(const char *method);
 Aml *aml_call1(const char *method, Aml *arg1);
 Aml *aml_call2(const char *method, Aml *arg1, Aml *arg2);
@@ -306,6 +321,8 @@ Aml *aml_call3(const char *method, Aml *arg1, Aml *arg2, Aml *arg3);
 Aml *aml_call4(const char *method, Aml *arg1, Aml *arg2, Aml *arg3, Aml *arg4);
 Aml *aml_call5(const char *method, Aml *arg1, Aml *arg2, Aml *arg3, Aml *arg4,
                Aml *arg5);
+Aml *aml_call6(const char *method, Aml *arg1, Aml *arg2, Aml *arg3, Aml *arg4,
+               Aml *arg5, Aml *arg6);
 Aml *aml_gpio_int(AmlConsumerAndProducer con_and_pro,
                   AmlLevelAndEdge edge_level,
                   AmlActiveHighAndLow active_level, AmlShared shared,
@@ -396,10 +413,37 @@ Aml *aml_concatenate(Aml *source1, Aml *source2, Aml *target);
 Aml *aml_object_type(Aml *object);
 
 void build_append_int_noprefix(GArray *table, uint64_t value, int size);
-void
-build_header(BIOSLinker *linker, GArray *table_data,
-             AcpiTableHeader *h, const char *sig, int len, uint8_t rev,
-             const char *oem_id, const char *oem_table_id);
+
+typedef struct AcpiTable {
+    const char *sig;
+    const uint8_t rev;
+    const char *oem_id;
+    const char *oem_table_id;
+    /* private vars tracking table state */
+    GArray *array;
+    unsigned table_offset;
+} AcpiTable;
+
+/**
+ * acpi_table_begin:
+ * initializes table header and keeps track of
+ * table data/offsets
+ * @desc: ACPI table descriptor
+ * @array: blob where the ACPI table will be composed/stored.
+ */
+void acpi_table_begin(AcpiTable *desc, GArray *array);
+
+/**
+ * acpi_table_end:
+ * sets actual table length and tells bios loader
+ * where table is for the later initialization on
+ * guest side.
+ * @linker: reference to BIOSLinker object to use for the table
+ * @table: ACPI table descriptor that was used with @acpi_table_begin
+ * counterpart
+ */
+void acpi_table_end(BIOSLinker *linker, AcpiTable *table);
+
 void *acpi_data_push(GArray *table_data, unsigned size);
 unsigned acpi_data_len(GArray *table);
 void acpi_add_table(GArray *table_offsets, GArray *table_data);
@@ -429,11 +473,28 @@ build_append_gas_from_struct(GArray *table, const struct AcpiGenericAddress *s)
                      s->access_width, s->address);
 }
 
-void build_srat_memory(AcpiSratMemoryAffinity *numamem, uint64_t base,
+void crs_range_insert(GPtrArray *ranges, uint64_t base, uint64_t limit);
+void crs_replace_with_free_ranges(GPtrArray *ranges,
+                                         uint64_t start, uint64_t end);
+void crs_range_set_init(CrsRangeSet *range_set);
+void crs_range_set_free(CrsRangeSet *range_set);
+
+Aml *build_crs(PCIHostState *host, CrsRangeSet *range_set, uint32_t io_offset,
+               uint32_t mmio32_offset, uint64_t mmio64_offset,
+               uint16_t bus_nr_offset);
+
+void build_srat_memory(GArray *table_data, uint64_t base,
                        uint64_t len, int node, MemoryAffinityFlags flags);
 
-void build_slit(GArray *table_data, BIOSLinker *linker, MachineState *ms);
+void build_slit(GArray *table_data, BIOSLinker *linker, MachineState *ms,
+                const char *oem_id, const char *oem_table_id);
+
+void build_pptt(GArray *table_data, BIOSLinker *linker, MachineState *ms,
+                const char *oem_id, const char *oem_table_id);
 
 void build_fadt(GArray *tbl, BIOSLinker *linker, const AcpiFadtData *f,
+                const char *oem_id, const char *oem_table_id);
+
+void build_tpm2(GArray *table_data, BIOSLinker *linker, GArray *tcpalog,
                 const char *oem_id, const char *oem_table_id);
 #endif

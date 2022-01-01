@@ -31,6 +31,10 @@
 #endif
 #include "mixeng.h"
 
+#ifdef CONFIG_GIO
+#include <gio/gio.h>
+#endif
+
 struct audio_pcm_ops;
 
 struct audio_callback {
@@ -40,7 +44,8 @@ struct audio_callback {
 
 struct audio_pcm_info {
     int bits;
-    int sign;
+    bool is_signed;
+    bool is_float;
     int freq;
     int nchannels;
     int bytes_per_frame;
@@ -139,6 +144,9 @@ struct audio_driver {
     const char *descr;
     void *(*init) (Audiodev *);
     void (*fini) (void *);
+#ifdef CONFIG_GIO
+    void (*set_dbus_server) (AudioState *s, GDBusObjectManagerServer *manager);
+#endif
     struct audio_pcm_ops *pcm_ops;
     int can_be_default;
     int max_voices_out;
@@ -152,6 +160,7 @@ struct audio_pcm_ops {
     int    (*init_out)(HWVoiceOut *hw, audsettings *as, void *drv_opaque);
     void   (*fini_out)(HWVoiceOut *hw);
     size_t (*write)   (HWVoiceOut *hw, void *buf, size_t size);
+    void   (*run_buffer_out)(HWVoiceOut *hw);
     /*
      * get a buffer that after later can be passed to put_buffer_out; optional
      * returns the buffer, and writes it's size to size (in bytes)
@@ -170,18 +179,19 @@ struct audio_pcm_ops {
     int    (*init_in) (HWVoiceIn *hw, audsettings *as, void *drv_opaque);
     void   (*fini_in) (HWVoiceIn *hw);
     size_t (*read)    (HWVoiceIn *hw, void *buf, size_t size);
+    void   (*run_buffer_in)(HWVoiceIn *hw);
     void  *(*get_buffer_in)(HWVoiceIn *hw, size_t *size);
     void   (*put_buffer_in)(HWVoiceIn *hw, void *buf, size_t size);
     void   (*enable_in)(HWVoiceIn *hw, bool enable);
     void   (*volume_in)(HWVoiceIn *hw, Volume *vol);
 };
 
+void audio_generic_run_buffer_in(HWVoiceIn *hw);
 void *audio_generic_get_buffer_in(HWVoiceIn *hw, size_t *size);
 void audio_generic_put_buffer_in(HWVoiceIn *hw, void *buf, size_t size);
+void audio_generic_run_buffer_out(HWVoiceOut *hw);
 void *audio_generic_get_buffer_out(HWVoiceOut *hw, size_t *size);
 size_t audio_generic_put_buffer_out(HWVoiceOut *hw, void *buf, size_t size);
-size_t audio_generic_put_buffer_out_nowrite(HWVoiceOut *hw, void *buf,
-                                            size_t size);
 size_t audio_generic_write(HWVoiceOut *hw, void *buf, size_t size);
 size_t audio_generic_read(HWVoiceIn *hw, void *buf, size_t size);
 
@@ -239,6 +249,8 @@ int audio_bug (const char *funcname, int cond);
 void *audio_calloc (const char *funcname, int nmemb, size_t size);
 
 void audio_run(AudioState *s, const char *msg);
+
+const char *audio_application_name(void);
 
 typedef struct RateCtl {
     int64_t start_ticks;

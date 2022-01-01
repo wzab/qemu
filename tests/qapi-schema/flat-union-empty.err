@@ -1,2 +1,0 @@
-tests/qapi-schema/flat-union-empty.json: In union 'Union':
-tests/qapi-schema/flat-union-empty.json:4: union has no branches

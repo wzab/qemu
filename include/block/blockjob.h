@@ -43,9 +43,6 @@ typedef struct BlockJob {
     /** Data belonging to the generic Job infrastructure */
     Job job;
 
-    /** The block device on which the job is operating.  */
-    BlockBackend *blk;
-
     /** Status that is published by the query-block-jobs QMP API */
     BlockDeviceIoStatus iostatus;
 
@@ -139,7 +136,7 @@ bool block_job_has_bdrv(BlockJob *job, BlockDriverState *bs);
  * Set a rate-limiting parameter for the job; the actual meaning may
  * vary depending on the job type.
  */
-void block_job_set_speed(BlockJob *job, int64_t speed, Error **errp);
+bool block_job_set_speed(BlockJob *job, int64_t speed, Error **errp);
 
 /**
  * block_job_query:
@@ -172,5 +169,12 @@ bool block_job_is_internal(BlockJob *job);
  * Returns the driver associated with a block job.
  */
 const BlockJobDriver *block_job_driver(BlockJob *job);
+
+/*
+ * block_job_get_aio_context:
+ *
+ * Returns aio context associated with a block job.
+ */
+AioContext *block_job_get_aio_context(BlockJob *job);
 
 #endif

@@ -77,6 +77,8 @@
 #define CPU2_BASE_SEG4       TO_REG(0x110)
 #define CPU2_BASE_SEG5       TO_REG(0x114)
 #define CPU2_CACHE_CTRL      TO_REG(0x118)
+#define CHIP_ID0             TO_REG(0x150)
+#define CHIP_ID1             TO_REG(0x154)
 #define UART_HPLL_CLK        TO_REG(0x160)
 #define PCIE_CTRL            TO_REG(0x180)
 #define BMC_MMIO_CTRL        TO_REG(0x184)
@@ -98,15 +100,27 @@
 #define AST2600_CLK_STOP_CTRL     TO_REG(0x80)
 #define AST2600_CLK_STOP_CTRL_CLR TO_REG(0x84)
 #define AST2600_CLK_STOP_CTRL2     TO_REG(0x90)
-#define AST2600_CLK_STOP_CTR2L_CLR TO_REG(0x94)
+#define AST2600_CLK_STOP_CTRL2_CLR TO_REG(0x94)
+#define AST2600_DEBUG_CTRL        TO_REG(0xC8)
+#define AST2600_DEBUG_CTRL2       TO_REG(0xD8)
 #define AST2600_SDRAM_HANDSHAKE   TO_REG(0x100)
 #define AST2600_HPLL_PARAM        TO_REG(0x200)
 #define AST2600_HPLL_EXT          TO_REG(0x204)
+#define AST2600_APLL_PARAM        TO_REG(0x210)
+#define AST2600_APLL_EXT          TO_REG(0x214)
+#define AST2600_MPLL_PARAM        TO_REG(0x220)
 #define AST2600_MPLL_EXT          TO_REG(0x224)
+#define AST2600_EPLL_PARAM        TO_REG(0x240)
 #define AST2600_EPLL_EXT          TO_REG(0x244)
+#define AST2600_DPLL_PARAM        TO_REG(0x260)
+#define AST2600_DPLL_EXT          TO_REG(0x264)
 #define AST2600_CLK_SEL           TO_REG(0x300)
 #define AST2600_CLK_SEL2          TO_REG(0x304)
-#define AST2600_CLK_SEL3          TO_REG(0x310)
+#define AST2600_CLK_SEL3          TO_REG(0x308)
+#define AST2600_CLK_SEL4          TO_REG(0x310)
+#define AST2600_CLK_SEL5          TO_REG(0x314)
+#define AST2600_UARTCLK           TO_REG(0x338)
+#define AST2600_HUARTCLK          TO_REG(0x33C)
 #define AST2600_HW_STRAP1         TO_REG(0x500)
 #define AST2600_HW_STRAP1_CLR     TO_REG(0x504)
 #define AST2600_HW_STRAP1_PROT    TO_REG(0x508)
@@ -115,6 +129,8 @@
 #define AST2600_HW_STRAP2_PROT    TO_REG(0x518)
 #define AST2600_RNG_CTRL          TO_REG(0x524)
 #define AST2600_RNG_DATA          TO_REG(0x540)
+#define AST2600_CHIP_ID0          TO_REG(0x5B0)
+#define AST2600_CHIP_ID1          TO_REG(0x5B4)
 
 #define AST2600_CLK TO_REG(0x40)
 
@@ -182,6 +198,8 @@ static const uint32_t ast2500_a1_resets[ASPEED_SCU_NR_REGS] = {
      [CPU2_BASE_SEG1]  = 0x80000000U,
      [CPU2_BASE_SEG4]  = 0x1E600000U,
      [CPU2_BASE_SEG5]  = 0xC0000000U,
+     [CHIP_ID0]        = 0x1234ABCDU,
+     [CHIP_ID1]        = 0x88884444U,
      [UART_HPLL_CLK]   = 0x00001903U,
      [PCIE_CTRL]       = 0x0000007BU,
      [BMC_DEV_ID]      = 0x00002402U
@@ -232,8 +250,47 @@ static uint64_t aspeed_scu_read(void *opaque, hwaddr offset, unsigned size)
     return s->regs[reg];
 }
 
-static void aspeed_scu_write(void *opaque, hwaddr offset, uint64_t data,
-                             unsigned size)
+static void aspeed_ast2400_scu_write(void *opaque, hwaddr offset,
+                                     uint64_t data, unsigned size)
+{
+    AspeedSCUState *s = ASPEED_SCU(opaque);
+    int reg = TO_REG(offset);
+
+    if (reg >= ASPEED_SCU_NR_REGS) {
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "%s: Out-of-bounds write at offset 0x%" HWADDR_PRIx "\n",
+                      __func__, offset);
+        return;
+    }
+
+    if (reg > PROT_KEY && reg < CPU2_BASE_SEG1 &&
+            !s->regs[PROT_KEY]) {
+        qemu_log_mask(LOG_GUEST_ERROR, "%s: SCU is locked!\n", __func__);
+    }
+
+    trace_aspeed_scu_write(offset, size, data);
+
+    switch (reg) {
+    case PROT_KEY:
+        s->regs[reg] = (data == ASPEED_SCU_PROT_KEY) ? 1 : 0;
+        return;
+    case SILICON_REV:
+    case FREQ_CNTR_EVAL:
+    case VGA_SCRATCH1 ... VGA_SCRATCH8:
+    case RNG_DATA:
+    case FREE_CNTR4:
+    case FREE_CNTR4_EXT:
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "%s: Write to read-only offset 0x%" HWADDR_PRIx "\n",
+                      __func__, offset);
+        return;
+    }
+
+    s->regs[reg] = data;
+}
+
+static void aspeed_ast2500_scu_write(void *opaque, hwaddr offset,
+                                     uint64_t data, unsigned size)
 {
     AspeedSCUState *s = ASPEED_SCU(opaque);
     int reg = TO_REG(offset);
@@ -257,31 +314,19 @@ static void aspeed_scu_write(void *opaque, hwaddr offset, uint64_t data,
     case PROT_KEY:
         s->regs[reg] = (data == ASPEED_SCU_PROT_KEY) ? 1 : 0;
         return;
-    case CLK_SEL:
-        s->regs[reg] = data;
-        break;
     case HW_STRAP1:
-        if (ASPEED_IS_AST2500(s->regs[SILICON_REV])) {
-            s->regs[HW_STRAP1] |= data;
-            return;
-        }
-        /* Jump to assignment below */
-        break;
+        s->regs[HW_STRAP1] |= data;
+        return;
     case SILICON_REV:
-        if (ASPEED_IS_AST2500(s->regs[SILICON_REV])) {
-            s->regs[HW_STRAP1] &= ~data;
-        } else {
-            qemu_log_mask(LOG_GUEST_ERROR,
-                          "%s: Write to read-only offset 0x%" HWADDR_PRIx "\n",
-                          __func__, offset);
-        }
-        /* Avoid assignment below, we've handled everything */
+        s->regs[HW_STRAP1] &= ~data;
         return;
     case FREQ_CNTR_EVAL:
     case VGA_SCRATCH1 ... VGA_SCRATCH8:
     case RNG_DATA:
     case FREE_CNTR4:
     case FREE_CNTR4_EXT:
+    case CHIP_ID0:
+    case CHIP_ID1:
         qemu_log_mask(LOG_GUEST_ERROR,
                       "%s: Write to read-only offset 0x%" HWADDR_PRIx "\n",
                       __func__, offset);
@@ -291,9 +336,19 @@ static void aspeed_scu_write(void *opaque, hwaddr offset, uint64_t data,
     s->regs[reg] = data;
 }
 
-static const MemoryRegionOps aspeed_scu_ops = {
+static const MemoryRegionOps aspeed_ast2400_scu_ops = {
     .read = aspeed_scu_read,
-    .write = aspeed_scu_write,
+    .write = aspeed_ast2400_scu_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 4,
+    },
+};
+
+static const MemoryRegionOps aspeed_ast2500_scu_ops = {
+    .read = aspeed_scu_read,
+    .write = aspeed_ast2500_scu_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
     .valid.min_access_size = 4,
     .valid.max_access_size = 4,
@@ -389,6 +444,9 @@ static uint32_t aspeed_silicon_revs[] = {
     AST2500_A0_SILICON_REV,
     AST2500_A1_SILICON_REV,
     AST2600_A0_SILICON_REV,
+    AST2600_A1_SILICON_REV,
+    AST2600_A2_SILICON_REV,
+    AST2600_A3_SILICON_REV,
 };
 
 bool is_supported_silicon_rev(uint32_t silicon_rev)
@@ -447,7 +505,7 @@ static void aspeed_scu_class_init(ObjectClass *klass, void *data)
     dc->reset = aspeed_scu_reset;
     dc->desc = "ASPEED System Control Unit";
     dc->vmsd = &vmstate_aspeed_scu;
-    dc->props = aspeed_scu_properties;
+    device_class_set_props(dc, aspeed_scu_properties);
 }
 
 static const TypeInfo aspeed_scu_info = {
@@ -469,7 +527,7 @@ static void aspeed_2400_scu_class_init(ObjectClass *klass, void *data)
     asc->calc_hpll = aspeed_2400_scu_calc_hpll;
     asc->apb_divider = 2;
     asc->nr_regs = ASPEED_SCU_NR_REGS;
-    asc->ops = &aspeed_scu_ops;
+    asc->ops = &aspeed_ast2400_scu_ops;
 }
 
 static const TypeInfo aspeed_2400_scu_info = {
@@ -489,7 +547,7 @@ static void aspeed_2500_scu_class_init(ObjectClass *klass, void *data)
     asc->calc_hpll = aspeed_2500_scu_calc_hpll;
     asc->apb_divider = 4;
     asc->nr_regs = ASPEED_SCU_NR_REGS;
-    asc->ops = &aspeed_scu_ops;
+    asc->ops = &aspeed_ast2500_scu_ops;
 }
 
 static const TypeInfo aspeed_2500_scu_info = {
@@ -532,11 +590,13 @@ static uint64_t aspeed_ast2600_scu_read(void *opaque, hwaddr offset,
     return s->regs[reg];
 }
 
-static void aspeed_ast2600_scu_write(void *opaque, hwaddr offset, uint64_t data,
-                                     unsigned size)
+static void aspeed_ast2600_scu_write(void *opaque, hwaddr offset,
+                                     uint64_t data64, unsigned size)
 {
     AspeedSCUState *s = ASPEED_SCU(opaque);
     int reg = TO_REG(offset);
+    /* Truncate here so bitwise operations below behave as expected */
+    uint32_t data = data64;
 
     if (reg >= ASPEED_AST2600_SCU_NR_REGS) {
         qemu_log_mask(LOG_GUEST_ERROR,
@@ -563,20 +623,29 @@ static void aspeed_ast2600_scu_write(void *opaque, hwaddr offset, uint64_t data,
         /* fall through */
     case AST2600_SYS_RST_CTRL:
     case AST2600_SYS_RST_CTRL2:
+    case AST2600_CLK_STOP_CTRL:
+    case AST2600_CLK_STOP_CTRL2:
         /* W1S (Write 1 to set) registers */
         s->regs[reg] |= data;
         return;
     case AST2600_SYS_RST_CTRL_CLR:
     case AST2600_SYS_RST_CTRL2_CLR:
+    case AST2600_CLK_STOP_CTRL_CLR:
+    case AST2600_CLK_STOP_CTRL2_CLR:
     case AST2600_HW_STRAP1_CLR:
     case AST2600_HW_STRAP2_CLR:
-        /* W1C (Write 1 to clear) registers */
-        s->regs[reg] &= ~data;
+        /*
+         * W1C (Write 1 to clear) registers are offset by one address from
+         * the data register
+         */
+        s->regs[reg - 1] &= ~data;
         return;
 
     case AST2600_RNG_DATA:
     case AST2600_SILICON_REV:
     case AST2600_SILICON_REV2:
+    case AST2600_CHIP_ID0:
+    case AST2600_CHIP_ID1:
         /* Add read only registers here */
         qemu_log_mask(LOG_GUEST_ERROR,
                       "%s: Write to read-only offset 0x%" HWADDR_PRIx "\n",
@@ -596,15 +665,28 @@ static const MemoryRegionOps aspeed_ast2600_scu_ops = {
     .valid.unaligned = false,
 };
 
-static const uint32_t ast2600_a0_resets[ASPEED_AST2600_SCU_NR_REGS] = {
-    [AST2600_SILICON_REV]       = AST2600_SILICON_REV,
-    [AST2600_SILICON_REV2]      = AST2600_SILICON_REV,
-    [AST2600_SYS_RST_CTRL]      = 0xF7CFFEDC | 0x100,
-    [AST2600_SYS_RST_CTRL2]     = 0xFFFFFFFC,
-    [AST2600_CLK_STOP_CTRL]     = 0xEFF43E8B,
+static const uint32_t ast2600_a3_resets[ASPEED_AST2600_SCU_NR_REGS] = {
+    [AST2600_SYS_RST_CTRL]      = 0xF7C3FED8,
+    [AST2600_SYS_RST_CTRL2]     = 0x0DFFFFFC,
+    [AST2600_CLK_STOP_CTRL]     = 0xFFFF7F8A,
     [AST2600_CLK_STOP_CTRL2]    = 0xFFF0FFF0,
-    [AST2600_SDRAM_HANDSHAKE]   = 0x00000040,  /* SoC completed DRAM init */
-    [AST2600_HPLL_PARAM]        = 0x1000405F,
+    [AST2600_DEBUG_CTRL]        = 0x00000FFF,
+    [AST2600_DEBUG_CTRL2]       = 0x000000FF,
+    [AST2600_SDRAM_HANDSHAKE]   = 0x00000000,
+    [AST2600_HPLL_PARAM]        = 0x1000408F,
+    [AST2600_APLL_PARAM]        = 0x1000405F,
+    [AST2600_MPLL_PARAM]        = 0x1008405F,
+    [AST2600_EPLL_PARAM]        = 0x1004077F,
+    [AST2600_DPLL_PARAM]        = 0x1078405F,
+    [AST2600_CLK_SEL]           = 0xF3940000,
+    [AST2600_CLK_SEL2]          = 0x00700000,
+    [AST2600_CLK_SEL3]          = 0x00000000,
+    [AST2600_CLK_SEL4]          = 0xF3F40000,
+    [AST2600_CLK_SEL5]          = 0x30000000,
+    [AST2600_UARTCLK]           = 0x00014506,
+    [AST2600_HUARTCLK]          = 0x000145C0,
+    [AST2600_CHIP_ID0]          = 0x1234ABCD,
+    [AST2600_CHIP_ID1]          = 0x88884444,
 };
 
 static void aspeed_ast2600_scu_reset(DeviceState *dev)
@@ -614,7 +696,12 @@ static void aspeed_ast2600_scu_reset(DeviceState *dev)
 
     memcpy(s->regs, asc->resets, asc->nr_regs * 4);
 
-    s->regs[AST2600_SILICON_REV] = s->silicon_rev;
+    /*
+     * A0 reports A0 in _REV, but subsequent revisions report A1 regardless
+     * of actual revision. QEMU and Linux only support A1 onwards so this is
+     * sufficient.
+     */
+    s->regs[AST2600_SILICON_REV] = AST2600_A3_SILICON_REV;
     s->regs[AST2600_SILICON_REV2] = s->silicon_rev;
     s->regs[AST2600_HW_STRAP1] = s->hw_strap1;
     s->regs[AST2600_HW_STRAP2] = s->hw_strap2;
@@ -628,7 +715,7 @@ static void aspeed_2600_scu_class_init(ObjectClass *klass, void *data)
 
     dc->desc = "ASPEED 2600 System Control Unit";
     dc->reset = aspeed_ast2600_scu_reset;
-    asc->resets = ast2600_a0_resets;
+    asc->resets = ast2600_a3_resets;
     asc->calc_hpll = aspeed_2500_scu_calc_hpll; /* No change since AST2500 */
     asc->apb_divider = 4;
     asc->nr_regs = ASPEED_AST2600_SCU_NR_REGS;

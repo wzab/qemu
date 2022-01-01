@@ -27,6 +27,8 @@
 #ifndef QEMU_VMSTATE_H
 #define QEMU_VMSTATE_H
 
+#include "hw/vmstate-if.h"
+
 typedef struct VMStateInfo VMStateInfo;
 typedef struct VMStateField VMStateField;
 
@@ -41,7 +43,7 @@ struct VMStateInfo {
     const char *name;
     int (*get)(QEMUFile *f, void *pv, size_t size, const VMStateField *field);
     int (*put)(QEMUFile *f, void *pv, size_t size, const VMStateField *field,
-               QJSON *vmdesc);
+               JSONWriter *vmdesc);
 };
 
 enum VMStateFlags {
@@ -151,6 +153,7 @@ typedef enum {
     MIG_PRI_DEFAULT = 0,
     MIG_PRI_IOMMU,              /* Must happen before PCI devices */
     MIG_PRI_PCI_BUS,            /* Must happen before IOMMU */
+    MIG_PRI_VIRTIO_MEM,         /* Must happen before IOMMU */
     MIG_PRI_GICV3_ITS,          /* Must happen before PCI devices */
     MIG_PRI_GICV3,              /* Must happen before the ITS */
     MIG_PRI_MAX,
@@ -186,11 +189,11 @@ struct VMStateDescription {
     int (*pre_save)(void *opaque);
     int (*post_save)(void *opaque);
     bool (*needed)(void *opaque);
+    bool (*dev_unplug_pending)(void *opaque);
+
     const VMStateField *fields;
     const VMStateDescription **subsections;
 };
-
-extern const VMStateDescription vmstate_dummy;
 
 extern const VMStateInfo vmstate_info_bool;
 
@@ -215,7 +218,6 @@ extern const VMStateInfo vmstate_info_uint64;
 #define VMS_NULLPTR_MARKER (0x30U) /* '0' */
 extern const VMStateInfo vmstate_info_nullptr;
 
-extern const VMStateInfo vmstate_info_float64;
 extern const VMStateInfo vmstate_info_cpudouble;
 
 extern const VMStateInfo vmstate_info_timer;
@@ -225,6 +227,7 @@ extern const VMStateInfo vmstate_info_tmp;
 extern const VMStateInfo vmstate_info_bitmap;
 extern const VMStateInfo vmstate_info_qtailq;
 extern const VMStateInfo vmstate_info_gtree;
+extern const VMStateInfo vmstate_info_qlist;
 
 #define type_check_2darray(t1,t2,n,m) ((t1(*)[n][m])0 - (t2*)0)
 /*
@@ -424,6 +427,16 @@ extern const VMStateInfo vmstate_info_gtree;
     .info       = &(_info),                                          \
     .size       = sizeof(_type),                                     \
     .flags      = VMS_VARRAY_UINT32|VMS_POINTER|VMS_ALLOC,           \
+    .offset     = vmstate_offset_pointer(_state, _field, _type),     \
+}
+
+#define VMSTATE_VARRAY_UINT16_ALLOC(_field, _state, _field_num, _version, _info, _type) {\
+    .name       = (stringify(_field)),                               \
+    .version_id = (_version),                                        \
+    .num_offset = vmstate_offset_value(_state, _field_num, uint16_t),\
+    .info       = &(_info),                                          \
+    .size       = sizeof(_type),                                     \
+    .flags      = VMS_VARRAY_UINT16 | VMS_POINTER | VMS_ALLOC,       \
     .offset     = vmstate_offset_pointer(_state, _field, _type),     \
 }
 
@@ -794,6 +807,26 @@ extern const VMStateInfo vmstate_info_gtree;
     .offset       = offsetof(_state, _field),                                  \
 }
 
+/*
+ * For migrating a QLIST
+ * Target QLIST needs be properly initialized.
+ * _type: type of QLIST element
+ * _next: name of QLIST_ENTRY entry field in QLIST element
+ * _vmsd: VMSD for QLIST element
+ * size: size of QLIST element
+ * start: offset of QLIST_ENTRY in QTAILQ element
+ */
+#define VMSTATE_QLIST_V(_field, _state, _version, _vmsd, _type, _next)  \
+{                                                                        \
+    .name         = (stringify(_field)),                                 \
+    .version_id   = (_version),                                          \
+    .vmsd         = &(_vmsd),                                            \
+    .size         = sizeof(_type),                                       \
+    .info         = &vmstate_info_qlist,                                 \
+    .offset       = offsetof(_state, _field),                            \
+    .start        = offsetof(_type, _next),                              \
+}
+
 /* _f : field name
    _f_n : num of elements field_name
    _n : num of elements
@@ -962,12 +995,6 @@ extern const VMStateInfo vmstate_info_gtree;
     VMSTATE_SINGLE_TEST(_f, _s, _t, 0, vmstate_info_uint64, uint64_t)
 
 
-#define VMSTATE_FLOAT64_V(_f, _s, _v)                                 \
-    VMSTATE_SINGLE(_f, _s, _v, vmstate_info_float64, float64)
-
-#define VMSTATE_FLOAT64(_f, _s)                                       \
-    VMSTATE_FLOAT64_V(_f, _s, 0)
-
 #define VMSTATE_TIMER_PTR_TEST(_f, _s, _test)                             \
     VMSTATE_POINTER_TEST(_f, _s, _test, vmstate_info_timer, QEMUTimer *)
 
@@ -1079,12 +1106,6 @@ extern const VMStateInfo vmstate_info_gtree;
 #define VMSTATE_INT64_ARRAY(_f, _s, _n)                               \
     VMSTATE_INT64_ARRAY_V(_f, _s, _n, 0)
 
-#define VMSTATE_FLOAT64_ARRAY_V(_f, _s, _n, _v)                       \
-    VMSTATE_ARRAY(_f, _s, _n, _v, vmstate_info_float64, float64)
-
-#define VMSTATE_FLOAT64_ARRAY(_f, _s, _n)                             \
-    VMSTATE_FLOAT64_ARRAY_V(_f, _s, _n, 0)
-
 #define VMSTATE_CPUDOUBLE_ARRAY_V(_f, _s, _n, _v)                     \
     VMSTATE_ARRAY(_f, _s, _n, _v, vmstate_info_cpudouble, CPU_DoubleU)
 
@@ -1147,32 +1168,34 @@ extern const VMStateInfo vmstate_info_gtree;
 int vmstate_load_state(QEMUFile *f, const VMStateDescription *vmsd,
                        void *opaque, int version_id);
 int vmstate_save_state(QEMUFile *f, const VMStateDescription *vmsd,
-                       void *opaque, QJSON *vmdesc);
+                       void *opaque, JSONWriter *vmdesc);
 int vmstate_save_state_v(QEMUFile *f, const VMStateDescription *vmsd,
-                         void *opaque, QJSON *vmdesc, int version_id);
+                         void *opaque, JSONWriter *vmdesc,
+                         int version_id);
 
 bool vmstate_save_needed(const VMStateDescription *vmsd, void *opaque);
 
+#define  VMSTATE_INSTANCE_ID_ANY  -1
+
 /* Returns: 0 on success, -1 on failure */
-int vmstate_register_with_alias_id(DeviceState *dev, int instance_id,
+int vmstate_register_with_alias_id(VMStateIf *obj, uint32_t instance_id,
                                    const VMStateDescription *vmsd,
                                    void *base, int alias_id,
                                    int required_for_version,
                                    Error **errp);
 
 /* Returns: 0 on success, -1 on failure */
-static inline int vmstate_register(DeviceState *dev, int instance_id,
+static inline int vmstate_register(VMStateIf *obj, int instance_id,
                                    const VMStateDescription *vmsd,
                                    void *opaque)
 {
-    return vmstate_register_with_alias_id(dev, instance_id, vmsd,
+    return vmstate_register_with_alias_id(obj, instance_id, vmsd,
                                           opaque, -1, 0, NULL);
 }
 
-void vmstate_unregister(DeviceState *dev, const VMStateDescription *vmsd,
+void vmstate_unregister(VMStateIf *obj, const VMStateDescription *vmsd,
                         void *opaque);
 
-struct MemoryRegion;
 void vmstate_register_ram(struct MemoryRegion *memory, DeviceState *dev);
 void vmstate_unregister_ram(struct MemoryRegion *memory, DeviceState *dev);
 void vmstate_register_ram_global(struct MemoryRegion *memory);

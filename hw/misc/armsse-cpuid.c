@@ -12,7 +12,7 @@
 /*
  * This is a model of the "CPU_IDENTITY" register block which is part of the
  * Arm SSE-200 and documented in
- * http://infocenter.arm.com/help/topic/com.arm.doc.101104_0100_00_en/corelink_sse200_subsystem_for_embedded_technical_reference_manual_101104_0100_00_en.pdf
+ * https://developer.arm.com/documentation/101104/latest/
  *
  * It consists of one read-only CPUID register (set by QOM property), plus the
  * usual ID registers.
@@ -116,7 +116,7 @@ static void armsse_cpuid_class_init(ObjectClass *klass, void *data)
      * does not need a reset function or VMState.
      */
 
-    dc->props = armsse_cpuid_props;
+    device_class_set_props(dc, armsse_cpuid_props);
 }
 
 static const TypeInfo armsse_cpuid_info = {

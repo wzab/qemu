@@ -18,28 +18,30 @@
 #include "hw/virtio/vhost.h"
 #include "hw/virtio/vhost-user.h"
 #include "chardev/char-fe.h"
+#include "qom/object.h"
 
 #define TYPE_VHOST_USER_FS "vhost-user-fs-device"
-#define VHOST_USER_FS(obj) \
-        OBJECT_CHECK(VHostUserFS, (obj), TYPE_VHOST_USER_FS)
+OBJECT_DECLARE_SIMPLE_TYPE(VHostUserFS, VHOST_USER_FS)
 
 typedef struct {
     CharBackend chardev;
     char *tag;
     uint16_t num_request_queues;
     uint16_t queue_size;
-    char *vhostfd;
 } VHostUserFSConf;
 
-typedef struct {
+struct VHostUserFS {
     /*< private >*/
     VirtIODevice parent;
     VHostUserFSConf conf;
     struct vhost_virtqueue *vhost_vqs;
     struct vhost_dev vhost_dev;
     VhostUserState vhost_user;
+    VirtQueue **req_vqs;
+    VirtQueue *hiprio_vq;
+    int32_t bootindex;
 
     /*< public >*/
-} VHostUserFS;
+};
 
 #endif /* _QEMU_VHOST_USER_FS_H */

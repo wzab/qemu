@@ -15,6 +15,7 @@
 #include "qemu/atomic.h"
 #include "qemu/notify.h"
 #include "qemu-thread-common.h"
+#include "qemu/tsan.h"
 
 static bool name_threads;
 
@@ -22,7 +23,8 @@ void qemu_thread_naming(bool enable)
 {
     name_threads = enable;
 
-#ifndef CONFIG_THREAD_SETNAME_BYTHREAD
+#if !defined CONFIG_PTHREAD_SETNAME_NP_W_TID && \
+    !defined CONFIG_PTHREAD_SETNAME_NP_WO_TID
     /* This is a debugging option, not fatal */
     if (enable) {
         fprintf(stderr, "qemu: thread naming not supported on this host\n");
@@ -115,12 +117,32 @@ void qemu_rec_mutex_init(QemuRecMutex *mutex)
 
     pthread_mutexattr_init(&attr);
     pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-    err = pthread_mutex_init(&mutex->lock, &attr);
+    err = pthread_mutex_init(&mutex->m.lock, &attr);
     pthread_mutexattr_destroy(&attr);
     if (err) {
         error_exit(err, __func__);
     }
-    mutex->initialized = true;
+    mutex->m.initialized = true;
+}
+
+void qemu_rec_mutex_destroy(QemuRecMutex *mutex)
+{
+    qemu_mutex_destroy(&mutex->m);
+}
+
+void qemu_rec_mutex_lock_impl(QemuRecMutex *mutex, const char *file, int line)
+{
+    qemu_mutex_lock_impl(&mutex->m, file, line);
+}
+
+int qemu_rec_mutex_trylock_impl(QemuRecMutex *mutex, const char *file, int line)
+{
+    return qemu_mutex_trylock_impl(&mutex->m, file, line);
+}
+
+void qemu_rec_mutex_unlock_impl(QemuRecMutex *mutex, const char *file, int line)
+{
+    qemu_mutex_unlock_impl(&mutex->m, file, line);
 }
 
 void qemu_cond_init(QemuCond *cond)
@@ -413,8 +435,8 @@ void qemu_event_set(QemuEvent *ev)
      */
     assert(ev->initialized);
     smp_mb();
-    if (atomic_read(&ev->value) != EV_SET) {
-        if (atomic_xchg(&ev->value, EV_SET) == EV_BUSY) {
+    if (qatomic_read(&ev->value) != EV_SET) {
+        if (qatomic_xchg(&ev->value, EV_SET) == EV_BUSY) {
             /* There were waiters, wake them up.  */
             qemu_futex_wake(ev, INT_MAX);
         }
@@ -426,14 +448,14 @@ void qemu_event_reset(QemuEvent *ev)
     unsigned value;
 
     assert(ev->initialized);
-    value = atomic_read(&ev->value);
+    value = qatomic_read(&ev->value);
     smp_mb_acquire();
     if (value == EV_SET) {
         /*
          * If there was a concurrent reset (or even reset+wait),
          * do nothing.  Otherwise change EV_SET->EV_FREE.
          */
-        atomic_or(&ev->value, EV_FREE);
+        qatomic_or(&ev->value, EV_FREE);
     }
 }
 
@@ -442,7 +464,7 @@ void qemu_event_wait(QemuEvent *ev)
     unsigned value;
 
     assert(ev->initialized);
-    value = atomic_read(&ev->value);
+    value = qatomic_read(&ev->value);
     smp_mb_acquire();
     if (value != EV_SET) {
         if (value == EV_FREE) {
@@ -452,7 +474,7 @@ void qemu_event_wait(QemuEvent *ev)
              * a concurrent busy->free transition.  After the CAS, the
              * event will be either set or busy.
              */
-            if (atomic_cmpxchg(&ev->value, EV_FREE, EV_BUSY) == EV_SET) {
+            if (qatomic_cmpxchg(&ev->value, EV_FREE, EV_BUSY) == EV_SET) {
                 return;
             }
         }
@@ -501,7 +523,6 @@ static void *qemu_thread_start(void *args)
     void *arg = qemu_thread_args->arg;
     void *r;
 
-#ifdef CONFIG_THREAD_SETNAME_BYTHREAD
     /* Attempt to set the threads name; note that this is for debug, so
      * we're not going to fail if we can't set it.
      */
@@ -512,12 +533,31 @@ static void *qemu_thread_start(void *args)
         pthread_setname_np(qemu_thread_args->name);
 # endif
     }
-#endif
+    QEMU_TSAN_ANNOTATE_THREAD_NAME(qemu_thread_args->name);
     g_free(qemu_thread_args->name);
     g_free(qemu_thread_args);
+
+    /*
+     * GCC 11 with glibc 2.17 on PowerPC reports
+     *
+     * qemu-thread-posix.c:540:5: error: ‘__sigsetjmp’ accessing 656 bytes
+     *   in a region of size 528 [-Werror=stringop-overflow=]
+     * 540 |     pthread_cleanup_push(qemu_thread_atexit_notify, NULL);
+     *     |     ^~~~~~~~~~~~~~~~~~~~
+     *
+     * which is clearly nonsense.
+     */
+#pragma GCC diagnostic push
+#ifndef __clang__
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
+
     pthread_cleanup_push(qemu_thread_atexit_notify, NULL);
     r = start_routine(arg);
     pthread_cleanup_pop(1);
+
+#pragma GCC diagnostic pop
+
     return r;
 }
 

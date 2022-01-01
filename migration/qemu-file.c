@@ -31,7 +31,7 @@
 #include "qapi/error.h"
 
 #define IO_BUF_SIZE 32768
-#define MAX_IOV_SIZE MIN(IOV_MAX, 64)
+#define MAX_IOV_SIZE MIN_CONST(IOV_MAX, 64)
 
 struct QEMUFile {
     const QEMUFileOps *ops;
@@ -53,6 +53,10 @@ struct QEMUFile {
 
     int last_error;
     Error *last_error_obj;
+    /* has the file has been shutdown */
+    bool shutdown;
+    /* Whether opaque points to a QIOChannel */
+    bool has_ioc;
 };
 
 /*
@@ -61,10 +65,18 @@ struct QEMUFile {
  */
 int qemu_file_shutdown(QEMUFile *f)
 {
+    int ret;
+
+    f->shutdown = true;
     if (!f->ops->shut_down) {
         return -ENOSYS;
     }
-    return f->ops->shut_down(f->opaque, true, true, NULL);
+    ret = f->ops->shut_down(f->opaque, true, true, NULL);
+
+    if (!f->last_error) {
+        qemu_file_set_error(f, -EIO);
+    }
+    return ret;
 }
 
 /*
@@ -91,7 +103,7 @@ bool qemu_file_mode_is_not_valid(const char *mode)
     return false;
 }
 
-QEMUFile *qemu_fopen_ops(void *opaque, const QEMUFileOps *ops)
+QEMUFile *qemu_fopen_ops(void *opaque, const QEMUFileOps *ops, bool has_ioc)
 {
     QEMUFile *f;
 
@@ -99,6 +111,7 @@ QEMUFile *qemu_fopen_ops(void *opaque, const QEMUFileOps *ops)
 
     f->opaque = opaque;
     f->ops = ops;
+    f->has_ioc = has_ioc;
     return f;
 }
 
@@ -214,6 +227,9 @@ void qemu_fflush(QEMUFile *f)
         return;
     }
 
+    if (f->shutdown) {
+        return;
+    }
     if (f->iovcnt > 0) {
         expect = iov_size(f->iov, f->iovcnt);
         ret = f->ops->writev_buffer(f->opaque, f->iov, f->iovcnt, f->pos,
@@ -328,6 +344,10 @@ static ssize_t qemu_fill_buffer(QEMUFile *f)
     f->buf_index = 0;
     f->buf_size = pending;
 
+    if (f->shutdown) {
+        return 0;
+    }
+
     len = f->ops->get_buffer(f->opaque, f->buf + pending, f->pos,
                              IO_BUF_SIZE - pending, &local_error);
     if (len > 0) {
@@ -399,6 +419,11 @@ static int add_to_iovec(QEMUFile *f, const uint8_t *buf, size_t size,
     {
         f->iov[f->iovcnt - 1].iov_len += size;
     } else {
+        if (f->iovcnt >= MAX_IOV_SIZE) {
+            /* Should only happen if a previous fflush failed */
+            assert(f->shutdown || !qemu_file_is_writable(f));
+            return 1;
+        }
         if (may_free) {
             set_bit(f->iovcnt, f->may_free);
         }
@@ -578,7 +603,7 @@ size_t qemu_get_buffer_in_place(QEMUFile *f, uint8_t **buf, size_t size)
 {
     if (size < IO_BUF_SIZE) {
         size_t res;
-        uint8_t *src;
+        uint8_t *src = NULL;
 
         res = qemu_peek_buffer(f, &src, size, 0);
 
@@ -642,6 +667,9 @@ int64_t qemu_ftell(QEMUFile *f)
 
 int qemu_file_rate_limit(QEMUFile *f)
 {
+    if (f->shutdown) {
+        return 1;
+    }
     if (qemu_file_get_error(f)) {
         return 1;
     }
@@ -744,11 +772,8 @@ static int qemu_compress_data(z_stream *stream, uint8_t *dest, size_t dest_len,
 /* Compress size bytes of data start at p and store the compressed
  * data to the buffer of f.
  *
- * When f is not writable, return -1 if f has no space to save the
- * compressed data.
- * When f is wirtable and it has no space to save the compressed data,
- * do fflush first, if f still has no space to save the compressed
- * data, return -1.
+ * Since the file is dummy file with empty_ops, return -1 if f has no space to
+ * save the compressed data.
  */
 ssize_t qemu_put_compression_data(QEMUFile *f, z_stream *stream,
                                   const uint8_t *p, size_t size)
@@ -756,14 +781,7 @@ ssize_t qemu_put_compression_data(QEMUFile *f, z_stream *stream,
     ssize_t blen = IO_BUF_SIZE - f->buf_index - sizeof(int32_t);
 
     if (blen < compressBound(size)) {
-        if (!qemu_file_is_writable(f)) {
-            return -1;
-        }
-        qemu_fflush(f);
-        blen = IO_BUF_SIZE - sizeof(int32_t);
-        if (blen < compressBound(size)) {
-            return -1;
-        }
+        return -1;
     }
 
     blen = qemu_compress_data(stream, f->buf + f->buf_index + sizeof(int32_t),
@@ -835,4 +853,16 @@ void qemu_file_set_blocking(QEMUFile *f, bool block)
     if (f->ops->set_blocking) {
         f->ops->set_blocking(f->opaque, block, NULL);
     }
+}
+
+/*
+ * Return the ioc object if it's a migration channel.  Note: it can return NULL
+ * for callers passing in a non-migration qemufile.  E.g. see qemu_fopen_bdrv()
+ * and its usage in e.g. load_snapshot().  So we need to check against NULL
+ * before using it.  If without the check, migration_incoming_state_destroy()
+ * could fail for load_snapshot().
+ */
+QIOChannel *qemu_file_get_ioc(QEMUFile *file)
+{
+    return file->has_ioc ? QIO_CHANNEL(file->opaque) : NULL;
 }

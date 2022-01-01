@@ -17,6 +17,8 @@
 #include "qemu/queue.h"
 #include "hw/core/cpu.h"
 #include "exec/memattrs.h"
+#include "qemu/accel.h"
+#include "qom/object.h"
 
 #ifdef NEED_CPU_H
 # ifdef CONFIG_KVM
@@ -44,28 +46,29 @@ extern bool kvm_readonly_mem_allowed;
 extern bool kvm_direct_msi_allowed;
 extern bool kvm_ioeventfd_any_length_allowed;
 extern bool kvm_msi_use_devid;
+extern bool kvm_has_guest_debug;
+extern int kvm_sstep_flags;
 
 #define kvm_enabled()           (kvm_allowed)
 /**
  * kvm_irqchip_in_kernel:
  *
- * Returns: true if the user asked us to create an in-kernel
- * irqchip via the "kernel_irqchip=on" machine option.
+ * Returns: true if an in-kernel irqchip was created.
  * What this actually means is architecture and machine model
- * specific: on PC, for instance, it means that the LAPIC,
- * IOAPIC and PIT are all in kernel. This function should never
- * be used from generic target-independent code: use one of the
- * following functions or some other specific check instead.
+ * specific: on PC, for instance, it means that the LAPIC
+ * is in kernel.  This function should never be used from generic
+ * target-independent code: use one of the following functions or
+ * some other specific check instead.
  */
 #define kvm_irqchip_in_kernel() (kvm_kernel_irqchip)
 
 /**
  * kvm_irqchip_is_split:
  *
- * Returns: true if the user asked us to split the irqchip
- * implementation between user and kernel space. The details are
- * architecture and machine specific. On PC, it means that the PIC,
- * IOAPIC, and PIT are in user space while the LAPIC is in the kernel.
+ * Returns: true if the irqchip implementation is split between
+ * user and kernel space.  The details are architecture and
+ * machine specific.  On PC, it means that the PIC, IOAPIC, and
+ * PIT are in user space while the LAPIC is in the kernel.
  */
 #define kvm_irqchip_is_split() (kvm_split_irqchip)
 
@@ -166,6 +169,17 @@ extern bool kvm_msi_use_devid;
  */
 #define kvm_msi_devid_required() (kvm_msi_use_devid)
 
+/*
+ * Does KVM support guest debugging
+ */
+#define kvm_supports_guest_debug() (kvm_has_guest_debug)
+
+/*
+ * kvm_supported_sstep_flags
+ * Returns: SSTEP_* flags that KVM supports for guest debug
+ */
+#define kvm_get_supported_sstep_flags() (kvm_sstep_flags)
+
 #else
 
 #define kvm_enabled()           (0)
@@ -183,6 +197,8 @@ extern bool kvm_msi_use_devid;
 #define kvm_direct_msi_enabled() (false)
 #define kvm_ioeventfd_any_length_enabled() (false)
 #define kvm_msi_devid_required() (false)
+#define kvm_supports_guest_debug() (false)
+#define kvm_get_supported_sstep_flags() (0)
 
 #endif  /* CONFIG_KVM_IS_POSSIBLE */
 
@@ -199,8 +215,14 @@ typedef struct KVMCapabilityInfo {
 #define KVM_CAP_LAST_INFO { NULL, 0 }
 
 struct KVMState;
+
+#define TYPE_KVM_ACCEL ACCEL_CLASS_NAME("kvm")
 typedef struct KVMState KVMState;
+DECLARE_INSTANCE_CHECKER(KVMState, KVM_STATE,
+                         TYPE_KVM_ACCEL)
+
 extern KVMState *kvm_state;
+typedef struct Notifier Notifier;
 
 /* external API */
 
@@ -215,10 +237,6 @@ int kvm_has_many_ioeventfds(void);
 int kvm_has_gsi_routing(void);
 int kvm_has_intx_set_mask(void);
 
-int kvm_init_vcpu(CPUState *cpu);
-int kvm_cpu_exec(CPUState *cpu);
-int kvm_destroy_vcpu(CPUState *cpu);
-
 /**
  * kvm_arm_supports_user_irq
  *
@@ -229,22 +247,6 @@ int kvm_destroy_vcpu(CPUState *cpu);
  * Returns: true if KVM supports using kernel generated IRQs from user space
  */
 bool kvm_arm_supports_user_irq(void);
-
-/**
- * kvm_memcrypt_enabled - return boolean indicating whether memory encryption
- *                        is enabled
- * Returns: 1 memory encryption is enabled
- *          0 memory encryption is disabled
- */
-bool kvm_memcrypt_enabled(void);
-
-/**
- * kvm_memcrypt_encrypt_data: encrypt the memory range
- *
- * Return: 1 failed to encrypt the range
- *         0 succesfully encrypted memory region
- */
-int kvm_memcrypt_encrypt_data(uint8_t *ptr, uint64_t len);
 
 
 #ifdef NEED_CPU_H
@@ -261,10 +263,6 @@ int kvm_update_guest_debug(CPUState *cpu, unsigned long reinject_trap);
 
 int kvm_on_sigbus_vcpu(CPUState *cpu, int code, void *addr);
 int kvm_on_sigbus(int code, void *addr);
-
-/* interface with exec.c */
-
-void phys_mem_set_alloc(void *(*alloc)(size_t, uint64_t *align, bool shared));
 
 /* internal API */
 
@@ -378,8 +376,7 @@ bool kvm_vcpu_id_is_valid(int vcpu_id);
 /* Returns VCPU ID to be used on KVM_CREATE_VCPU ioctl() */
 unsigned long kvm_arch_vcpu_id(CPUState *cpu);
 
-#ifdef TARGET_I386
-#define KVM_HAVE_MCE_INJECTION 1
+#ifdef KVM_HAVE_MCE_INJECTION
 void kvm_arch_on_sigbus_vcpu(CPUState *cpu, int code, void *addr);
 #endif
 
@@ -400,6 +397,10 @@ int kvm_set_irq(KVMState *s, int irq, int level);
 int kvm_irqchip_send_msi(KVMState *s, MSIMessage msg);
 
 void kvm_irqchip_add_irq_route(KVMState *s, int gsi, int irqchip, int pin);
+
+void kvm_irqchip_add_change_notifier(Notifier *n);
+void kvm_irqchip_remove_change_notifier(Notifier *n);
+void kvm_irqchip_change_notify(void);
 
 void kvm_get_apic_state(DeviceState *d, struct kvm_lapic_state *kapic);
 
@@ -475,9 +476,6 @@ int kvm_physical_memory_addr_from_host(KVMState *s, void *ram_addr,
 #endif /* NEED_CPU_H */
 
 void kvm_cpu_synchronize_state(CPUState *cpu);
-void kvm_cpu_synchronize_post_reset(CPUState *cpu);
-void kvm_cpu_synchronize_post_init(CPUState *cpu);
-void kvm_cpu_synchronize_pre_loadvm(CPUState *cpu);
 
 void kvm_init_cpu_signals(CPUState *cpu);
 
@@ -510,14 +508,16 @@ int kvm_irqchip_add_irqfd_notifier(KVMState *s, EventNotifier *n,
 int kvm_irqchip_remove_irqfd_notifier(KVMState *s, EventNotifier *n,
                                       qemu_irq irq);
 void kvm_irqchip_set_qemuirq_gsi(KVMState *s, qemu_irq irq, int gsi);
-void kvm_pc_gsi_handler(void *opaque, int n, int level);
 void kvm_pc_setup_irq_routing(bool pci_enabled);
 void kvm_init_irq_routing(KVMState *s);
+
+bool kvm_kernel_irqchip_allowed(void);
+bool kvm_kernel_irqchip_required(void);
+bool kvm_kernel_irqchip_split(void);
 
 /**
  * kvm_arch_irqchip_create:
  * @KVMState: The KVMState pointer
- * @MachineState: The MachineState pointer
  *
  * Allow architectures to create an in-kernel irq chip themselves.
  *
@@ -525,7 +525,7 @@ void kvm_init_irq_routing(KVMState *s);
  *            0: irq chip was not created
  *          > 0: irq chip was created
  */
-int kvm_arch_irqchip_create(MachineState *ms, KVMState *s);
+int kvm_arch_irqchip_create(KVMState *s);
 
 /**
  * kvm_set_one_reg - set a register value in KVM via KVM_SET_ONE_REG ioctl
@@ -548,4 +548,19 @@ int kvm_set_one_reg(CPUState *cs, uint64_t id, void *source);
 int kvm_get_one_reg(CPUState *cs, uint64_t id, void *target);
 struct ppc_radix_page_info *kvm_get_radix_page_info(void);
 int kvm_get_max_memslots(void);
+
+/* Notify resamplefd for EOI of specific interrupts. */
+void kvm_resample_fd_notify(int gsi);
+
+/**
+ * kvm_cpu_check_are_resettable - return whether CPUs can be reset
+ *
+ * Returns: true: CPUs are resettable
+ *          false: CPUs are not resettable
+ */
+bool kvm_cpu_check_are_resettable(void);
+
+bool kvm_arch_cpu_check_are_resettable(void);
+
+bool kvm_dirty_ring_enabled(void);
 #endif

@@ -21,8 +21,11 @@
 #include "qemu-common.h"
 #include "qemu/error-report.h"
 #include "qemu.h"
+#include "user-internals.h"
 #include "cpu_loop-common.h"
+#include "signal-common.h"
 #include "elf.h"
+#include "semihosting/common-semi.h"
 
 void cpu_loop(CPURISCVState *env)
 {
@@ -66,9 +69,9 @@ void cpu_loop(CPURISCVState *env)
                                  env->gpr[xA5],
                                  0, 0);
             }
-            if (ret == -TARGET_ERESTARTSYS) {
+            if (ret == -QEMU_ERESTARTSYS) {
                 env->pc -= 4;
-            } else if (ret != -TARGET_QEMU_ESIGRETURN) {
+            } else if (ret != -QEMU_ESIGRETURN) {
                 env->gpr[xA0] = ret;
             }
             if (cs->singlestep_enabled) {
@@ -84,11 +87,9 @@ void cpu_loop(CPURISCVState *env)
             sigcode = TARGET_TRAP_BRKPT;
             sigaddr = env->pc;
             break;
-        case RISCV_EXCP_INST_PAGE_FAULT:
-        case RISCV_EXCP_LOAD_PAGE_FAULT:
-        case RISCV_EXCP_STORE_PAGE_FAULT:
-            signum = TARGET_SIGSEGV;
-            sigcode = TARGET_SEGV_MAPERR;
+        case RISCV_EXCP_SEMIHOST:
+            env->gpr[xA0] = do_common_semihosting(cs);
+            env->pc += 4;
             break;
         case EXCP_DEBUG:
         gdbstep:
@@ -108,7 +109,7 @@ void cpu_loop(CPURISCVState *env)
                 .si_code = sigcode,
                 ._sifields._sigfault._addr = sigaddr
             };
-            queue_signal(env, info.si_signo, QEMU_SI_KILL, &info);
+            queue_signal(env, info.si_signo, QEMU_SI_FAULT, &info);
         }
 
         process_pending_signals(env);
@@ -125,8 +126,13 @@ void target_cpu_copy_regs(CPUArchState *env, struct target_pt_regs *regs)
     env->gpr[xSP] = regs->sp;
     env->elf_flags = info->elf_flags;
 
-    if ((env->misa & RVE) && !(env->elf_flags & EF_RISCV_RVE)) {
+    if ((env->misa_ext & RVE) && !(env->elf_flags & EF_RISCV_RVE)) {
         error_report("Incompatible ELF: RVE cpu requires RVE ABI binary");
         exit(EXIT_FAILURE);
     }
+
+    ts->stack_base = info->start_stack;
+    ts->heap_base = info->brk;
+    /* This will be filled in on the first SYS_HEAPINFO call.  */
+    ts->heap_limit = 0;
 }

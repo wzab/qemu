@@ -8,7 +8,7 @@
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
- * version 2 of the License, or (at your option) any later version.
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -38,27 +38,8 @@ extern PowerPCCPUAlias ppc_cpu_aliases[];
 /*****************************************************************************/
 /* PVR definitions for most known PowerPC                                    */
 enum {
-    /* PowerPC 401 family */
-    /* Generic PowerPC 401 */
-#define CPU_POWERPC_401              CPU_POWERPC_401G2
-    /* PowerPC 401 cores */
-    CPU_POWERPC_401A1              = 0x00210000,
-    CPU_POWERPC_401B2              = 0x00220000,
-    CPU_POWERPC_401C2              = 0x00230000,
-    CPU_POWERPC_401D2              = 0x00240000,
-    CPU_POWERPC_401E2              = 0x00250000,
-    CPU_POWERPC_401F2              = 0x00260000,
-    CPU_POWERPC_401G2              = 0x00270000,
-    /* PowerPC 401 microcontrolers */
-#define CPU_POWERPC_IOP480           CPU_POWERPC_401B2
     /* IBM Processor for Network Resources */
     CPU_POWERPC_COBRA              = 0x10100000, /* XXX: 405 ? */
-    /* PowerPC 403 family */
-    /* PowerPC 403 microcontrollers */
-    CPU_POWERPC_403GA              = 0x00200011,
-    CPU_POWERPC_403GB              = 0x00200100,
-    CPU_POWERPC_403GC              = 0x00200200,
-    CPU_POWERPC_403GCX             = 0x00201400,
     /* PowerPC 405 family */
     /* PowerPC 405 cores */
     CPU_POWERPC_405D2              = 0x20010000,
@@ -373,6 +354,9 @@ enum {
     CPU_POWERPC_POWER9_BASE        = 0x004E0000,
     CPU_POWERPC_POWER9_DD1         = 0x004E0100,
     CPU_POWERPC_POWER9_DD20        = 0x004E1200,
+    CPU_POWERPC_POWER10_BASE       = 0x00800000,
+    CPU_POWERPC_POWER10_DD1        = 0x00800100,
+    CPU_POWERPC_POWER10_DD20       = 0x00800200,
     CPU_POWERPC_970_v22            = 0x00390202,
     CPU_POWERPC_970FX_v10          = 0x00391100,
     CPU_POWERPC_970FX_v20          = 0x003C0200,
@@ -409,6 +393,7 @@ enum {
     CPU_POWERPC_LOGICAL_2_06_PLUS  = 0x0F100003,
     CPU_POWERPC_LOGICAL_2_07       = 0x0F000004,
     CPU_POWERPC_LOGICAL_3_00       = 0x0F000005,
+    CPU_POWERPC_LOGICAL_3_10       = 0x0F000006,
 };
 
 /* System version register (used on MPC 8xxx)                                */

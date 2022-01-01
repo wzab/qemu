@@ -20,7 +20,9 @@
 #include "qemu/osdep.h"
 #include "qemu-common.h"
 #include "qemu.h"
+#include "user-internals.h"
 #include "cpu_loop-common.h"
+#include "signal-common.h"
 
 void cpu_loop(CPUAlphaState *env)
 {
@@ -51,21 +53,6 @@ void cpu_loop(CPUAlphaState *env)
         case EXCP_DEV_INTERRUPT:
             fprintf(stderr, "External interrupt. Exit\n");
             exit(EXIT_FAILURE);
-            break;
-        case EXCP_MMFAULT:
-            info.si_signo = TARGET_SIGSEGV;
-            info.si_errno = 0;
-            info.si_code = (page_get_flags(env->trap_arg0) & PAGE_VALID
-                            ? TARGET_SEGV_ACCERR : TARGET_SEGV_MAPERR);
-            info._sifields._sigfault._addr = env->trap_arg0;
-            queue_signal(env, info.si_signo, QEMU_SI_FAULT, &info);
-            break;
-        case EXCP_UNALIGN:
-            info.si_signo = TARGET_SIGBUS;
-            info.si_errno = 0;
-            info.si_code = TARGET_BUS_ADRALN;
-            info._sifields._sigfault._addr = env->trap_arg0;
-            queue_signal(env, info.si_signo, QEMU_SI_FAULT, &info);
             break;
         case EXCP_OPCDEC:
         do_sigill:
@@ -111,11 +98,11 @@ void cpu_loop(CPUAlphaState *env)
                                     env->ir[IR_A2], env->ir[IR_A3],
                                     env->ir[IR_A4], env->ir[IR_A5],
                                     0, 0);
-                if (sysret == -TARGET_ERESTARTSYS) {
+                if (sysret == -QEMU_ERESTARTSYS) {
                     env->pc -= 4;
                     break;
                 }
-                if (sysret == -TARGET_QEMU_ESIGRETURN) {
+                if (sysret == -QEMU_ESIGRETURN) {
                     break;
                 }
                 /* Syscall writes 0 to V0 to bypass error check, similar

@@ -1,2 +1,0 @@
-tests/qapi-schema/flat-union-no-base.json: In union 'TestUnion':
-tests/qapi-schema/flat-union-no-base.json:9: 'discriminator' requires 'base'

@@ -93,10 +93,16 @@ static void sys_cache_info(int *isize, int *dsize)
 static void sys_cache_info(int *isize, int *dsize)
 {
 # ifdef _SC_LEVEL1_ICACHE_LINESIZE
-    *isize = sysconf(_SC_LEVEL1_ICACHE_LINESIZE);
+    int tmp_isize = (int) sysconf(_SC_LEVEL1_ICACHE_LINESIZE);
+    if (tmp_isize > 0) {
+        *isize = tmp_isize;
+    }
 # endif
 # ifdef _SC_LEVEL1_DCACHE_LINESIZE
-    *dsize = sysconf(_SC_LEVEL1_DCACHE_LINESIZE);
+    int tmp_dsize = (int) sysconf(_SC_LEVEL1_DCACHE_LINESIZE);
+    if (tmp_dsize > 0) {
+        *dsize = tmp_dsize;
+    }
 # endif
 }
 #endif /* sys_cache_info */
@@ -160,9 +166,11 @@ static void fallback_cache_info(int *isize, int *dsize)
         *isize = *dsize;
     } else {
 #if defined(_ARCH_PPC)
-        /* For PPC, we're going to use the icache size computed for
-           flush_icache_range.  Which means that we must use the
-           architecture minimum.  */
+        /*
+         * For PPC, we're going to use the cache sizes computed for
+         * flush_idcache_range.  Which means that we must use the
+         * architecture minimum.
+         */
         *isize = *dsize = 16;
 #else
         /* Otherwise, 64 bytes is not uncommon.  */
@@ -187,5 +195,5 @@ static void __attribute__((constructor)) init_cache_info(void)
     qemu_dcache_linesize = dsize;
     qemu_dcache_linesize_log = ctz32(dsize);
 
-    atomic64_init();
+    qatomic64_init();
 }

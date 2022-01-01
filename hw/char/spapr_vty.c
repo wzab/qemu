@@ -2,25 +2,25 @@
 #include "qemu/error-report.h"
 #include "qemu/module.h"
 #include "qapi/error.h"
-#include "cpu.h"
 #include "migration/vmstate.h"
 #include "chardev/char-fe.h"
 #include "hw/ppc/spapr.h"
 #include "hw/ppc/spapr_vio.h"
 #include "hw/qdev-properties.h"
+#include "hw/qdev-properties-system.h"
+#include "qom/object.h"
 
 #define VTERM_BUFSIZE   16
 
-typedef struct SpaprVioVty {
+struct SpaprVioVty {
     SpaprVioDevice sdev;
     CharBackend chardev;
     uint32_t in, out;
     uint8_t buf[VTERM_BUFSIZE];
-} SpaprVioVty;
+};
 
 #define TYPE_VIO_SPAPR_VTY_DEVICE "spapr-vty"
-#define VIO_SPAPR_VTY_DEVICE(obj) \
-     OBJECT_CHECK(SpaprVioVty, (obj), TYPE_VIO_SPAPR_VTY_DEVICE)
+OBJECT_DECLARE_SIMPLE_TYPE(SpaprVioVty, VIO_SPAPR_VTY_DEVICE)
 
 static int vty_can_receive(void *opaque)
 {
@@ -158,9 +158,9 @@ void spapr_vty_create(SpaprVioBus *bus, Chardev *chardev)
 {
     DeviceState *dev;
 
-    dev = qdev_create(&bus->bus, "spapr-vty");
+    dev = qdev_new("spapr-vty");
     qdev_prop_set_chr(dev, "chardev", chardev);
-    qdev_init_nofail(dev);
+    qdev_realize_and_unref(dev, &bus->bus, &error_fatal);
 }
 
 static Property spapr_vty_properties[] = {
@@ -193,7 +193,7 @@ static void spapr_vty_class_init(ObjectClass *klass, void *data)
     k->dt_type = "serial";
     k->dt_compatible = "hvterm1";
     set_bit(DEVICE_CATEGORY_INPUT, dc->categories);
-    dc->props = spapr_vty_properties;
+    device_class_set_props(dc, spapr_vty_properties);
     dc->vmsd = &vmstate_spapr_vty;
 }
 

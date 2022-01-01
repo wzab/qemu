@@ -34,7 +34,8 @@ static void superh_cpu_set_pc(CPUState *cs, vaddr value)
     cpu->env.pc = value;
 }
 
-static void superh_cpu_synchronize_from_tb(CPUState *cs, TranslationBlock *tb)
+static void superh_cpu_synchronize_from_tb(CPUState *cs,
+                                           const TranslationBlock *tb)
 {
     SuperHCPU *cpu = SUPERH_CPU(cs);
 
@@ -42,19 +43,36 @@ static void superh_cpu_synchronize_from_tb(CPUState *cs, TranslationBlock *tb)
     cpu->env.flags = tb->flags & TB_FLAG_ENVFLAGS_MASK;
 }
 
+#ifndef CONFIG_USER_ONLY
+static bool superh_io_recompile_replay_branch(CPUState *cs,
+                                              const TranslationBlock *tb)
+{
+    SuperHCPU *cpu = SUPERH_CPU(cs);
+    CPUSH4State *env = &cpu->env;
+
+    if ((env->flags & ((DELAY_SLOT | DELAY_SLOT_CONDITIONAL))) != 0
+        && env->pc != tb->pc) {
+        env->pc -= 2;
+        env->flags &= ~(DELAY_SLOT | DELAY_SLOT_CONDITIONAL);
+        return true;
+    }
+    return false;
+}
+#endif
+
 static bool superh_cpu_has_work(CPUState *cs)
 {
     return cs->interrupt_request & CPU_INTERRUPT_HARD;
 }
 
-/* CPUClass::reset() */
-static void superh_cpu_reset(CPUState *s)
+static void superh_cpu_reset(DeviceState *dev)
 {
+    CPUState *s = CPU(dev);
     SuperHCPU *cpu = SUPERH_CPU(s);
     SuperHCPUClass *scc = SUPERH_CPU_GET_CLASS(cpu);
     CPUSH4State *env = &cpu->env;
 
-    scc->parent_reset(s);
+    scc->parent_reset(dev);
 
     memset(env, 0, offsetof(CPUSH4State, end_reset_fields));
 
@@ -200,9 +218,32 @@ static void superh_cpu_initfn(Object *obj)
     env->movcal_backup_tail = &(env->movcal_backup);
 }
 
+#ifndef CONFIG_USER_ONLY
 static const VMStateDescription vmstate_sh_cpu = {
     .name = "cpu",
     .unmigratable = 1,
+};
+
+#include "hw/core/sysemu-cpu-ops.h"
+
+static const struct SysemuCPUOps sh4_sysemu_ops = {
+    .get_phys_page_debug = superh_cpu_get_phys_page_debug,
+};
+#endif
+
+#include "hw/core/tcg-cpu-ops.h"
+
+static const struct TCGCPUOps superh_tcg_ops = {
+    .initialize = sh4_translate_init,
+    .synchronize_from_tb = superh_cpu_synchronize_from_tb,
+
+#ifndef CONFIG_USER_ONLY
+    .tlb_fill = superh_cpu_tlb_fill,
+    .cpu_exec_interrupt = superh_cpu_exec_interrupt,
+    .do_interrupt = superh_cpu_do_interrupt,
+    .do_unaligned_access = superh_cpu_do_unaligned_access,
+    .io_recompile_replay_branch = superh_io_recompile_replay_branch,
+#endif /* !CONFIG_USER_ONLY */
 };
 
 static void superh_cpu_class_init(ObjectClass *oc, void *data)
@@ -214,29 +255,22 @@ static void superh_cpu_class_init(ObjectClass *oc, void *data)
     device_class_set_parent_realize(dc, superh_cpu_realizefn,
                                     &scc->parent_realize);
 
-    scc->parent_reset = cc->reset;
-    cc->reset = superh_cpu_reset;
+    device_class_set_parent_reset(dc, superh_cpu_reset, &scc->parent_reset);
 
     cc->class_by_name = superh_cpu_class_by_name;
     cc->has_work = superh_cpu_has_work;
-    cc->do_interrupt = superh_cpu_do_interrupt;
-    cc->cpu_exec_interrupt = superh_cpu_exec_interrupt;
     cc->dump_state = superh_cpu_dump_state;
     cc->set_pc = superh_cpu_set_pc;
-    cc->synchronize_from_tb = superh_cpu_synchronize_from_tb;
     cc->gdb_read_register = superh_cpu_gdb_read_register;
     cc->gdb_write_register = superh_cpu_gdb_write_register;
-    cc->tlb_fill = superh_cpu_tlb_fill;
 #ifndef CONFIG_USER_ONLY
-    cc->do_unaligned_access = superh_cpu_do_unaligned_access;
-    cc->get_phys_page_debug = superh_cpu_get_phys_page_debug;
+    cc->sysemu_ops = &sh4_sysemu_ops;
+    dc->vmsd = &vmstate_sh_cpu;
 #endif
     cc->disas_set_info = superh_cpu_disas_set_info;
-    cc->tcg_initialize = sh4_translate_init;
 
     cc->gdb_num_core_regs = 59;
-
-    dc->vmsd = &vmstate_sh_cpu;
+    cc->tcg_ops = &superh_tcg_ops;
 }
 
 #define DEFINE_SUPERH_CPU_TYPE(type_name, cinit, initfn) \

@@ -167,6 +167,21 @@ void coroutine_fn qemu_co_mutex_lock(CoMutex *mutex);
  */
 void coroutine_fn qemu_co_mutex_unlock(CoMutex *mutex);
 
+/**
+ * Assert that the current coroutine holds @mutex.
+ */
+static inline coroutine_fn void qemu_co_mutex_assert_locked(CoMutex *mutex)
+{
+    /*
+     * mutex->holder doesn't need any synchronisation if the assertion holds
+     * true because the mutex protects it. If it doesn't hold true, we still
+     * don't mind if another thread takes or releases mutex behind our back,
+     * because the condition will be false no matter whether we read NULL or
+     * the pointer for any other coroutine.
+     */
+    assert(qatomic_read(&mutex->locked) &&
+           mutex->holder == qemu_coroutine_self());
+}
 
 /**
  * CoQueues are a mechanism to queue coroutines in order to continue executing
@@ -195,13 +210,15 @@ void coroutine_fn qemu_co_queue_wait_impl(CoQueue *queue, QemuLockable *lock);
 /**
  * Removes the next coroutine from the CoQueue, and wake it up.
  * Returns true if a coroutine was removed, false if the queue is empty.
+ * OK to run from coroutine and non-coroutine context.
  */
-bool coroutine_fn qemu_co_queue_next(CoQueue *queue);
+bool qemu_co_queue_next(CoQueue *queue);
 
 /**
  * Empties the CoQueue; all coroutines are woken up.
+ * OK to run from coroutine and non-coroutine context.
  */
-void coroutine_fn qemu_co_queue_restart_all(CoQueue *queue);
+void qemu_co_queue_restart_all(CoQueue *queue);
 
 /**
  * Removes the next coroutine from the CoQueue, and wake it up.  Unlike
@@ -222,11 +239,15 @@ bool qemu_co_enter_next_impl(CoQueue *queue, QemuLockable *lock);
 bool qemu_co_queue_empty(CoQueue *queue);
 
 
+typedef struct CoRwTicket CoRwTicket;
 typedef struct CoRwlock {
-    int pending_writer;
-    int reader;
     CoMutex mutex;
-    CoQueue queue;
+
+    /* Number of readers, or -1 if owned for writing.  */
+    int owners;
+
+    /* Waiting coroutines.  */
+    QSIMPLEQ_HEAD(, CoRwTicket) tickets;
 } CoRwlock;
 
 /**
@@ -245,10 +266,9 @@ void qemu_co_rwlock_rdlock(CoRwlock *lock);
 /**
  * Write Locks the CoRwlock from a reader.  This is a bit more efficient than
  * @qemu_co_rwlock_unlock followed by a separate @qemu_co_rwlock_wrlock.
- * However, if the lock cannot be upgraded immediately, control is transferred
- * to the caller of the current coroutine.  Also, @qemu_co_rwlock_upgrade
- * only overrides CoRwlock fairness if there are no concurrent readers, so
- * another writer might run while @qemu_co_rwlock_upgrade blocks.
+ * Note that if the lock cannot be upgraded immediately, control is transferred
+ * to the caller of the current coroutine; another writer might run while
+ * @qemu_co_rwlock_upgrade blocks.
  */
 void qemu_co_rwlock_upgrade(CoRwlock *lock);
 
@@ -273,10 +293,36 @@ void qemu_co_rwlock_wrlock(CoRwlock *lock);
  */
 void qemu_co_rwlock_unlock(CoRwlock *lock);
 
+typedef struct QemuCoSleep {
+    Coroutine *to_wake;
+} QemuCoSleep;
+
 /**
- * Yield the coroutine for a given duration
+ * Yield the coroutine for a given duration. Initializes @w so that,
+ * during this yield, it can be passed to qemu_co_sleep_wake() to
+ * terminate the sleep.
  */
-void coroutine_fn qemu_co_sleep_ns(QEMUClockType type, int64_t ns);
+void coroutine_fn qemu_co_sleep_ns_wakeable(QemuCoSleep *w,
+                                            QEMUClockType type, int64_t ns);
+
+/**
+ * Yield the coroutine until the next call to qemu_co_sleep_wake.
+ */
+void coroutine_fn qemu_co_sleep(QemuCoSleep *w);
+
+static inline void coroutine_fn qemu_co_sleep_ns(QEMUClockType type, int64_t ns)
+{
+    QemuCoSleep w = { 0 };
+    qemu_co_sleep_ns_wakeable(&w, type, ns);
+}
+
+/**
+ * Wake a coroutine if it is sleeping in qemu_co_sleep_ns. The timer will be
+ * deleted. @sleep_state must be the variable whose address was given to
+ * qemu_co_sleep_ns() and should be checked to be non-NULL before calling
+ * qemu_co_sleep_wake().
+ */
+void qemu_co_sleep_wake(QemuCoSleep *w);
 
 /**
  * Yield until a file descriptor becomes readable

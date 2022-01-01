@@ -104,7 +104,7 @@ void pcie_cap_deverr_reset(PCIDevice *dev);
 void pcie_cap_lnkctl_init(PCIDevice *dev);
 void pcie_cap_lnkctl_reset(PCIDevice *dev);
 
-void pcie_cap_slot_init(PCIDevice *dev, uint16_t slot);
+void pcie_cap_slot_init(PCIDevice *dev, PCIESlot *s);
 void pcie_cap_slot_reset(PCIDevice *dev);
 void pcie_cap_slot_get(PCIDevice *dev, uint16_t *slt_ctl, uint16_t *slt_sta);
 void pcie_cap_slot_write_config(PCIDevice *dev,
@@ -137,7 +137,7 @@ void pcie_acs_reset(PCIDevice *dev);
 
 void pcie_ari_init(PCIDevice *dev, uint16_t offset, uint16_t nextfn);
 void pcie_dev_ser_num_init(PCIDevice *dev, uint16_t offset, uint64_t ser_num);
-void pcie_ats_init(PCIDevice *dev, uint16_t offset);
+void pcie_ats_init(PCIDevice *dev, uint16_t offset, bool aligned);
 
 void pcie_cap_slot_pre_plug_cb(HotplugHandler *hotplug_dev, DeviceState *dev,
                                Error **errp);

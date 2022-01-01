@@ -97,7 +97,7 @@ static void pmac_ide_atapi_transfer_cb(void *opaque, int ret)
         /* Non-block ATAPI transfer - just copy to RAM */
         s->io_buffer_size = MIN(s->io_buffer_size, io->len);
         dma_memory_write(&address_space_memory, io->addr, s->io_buffer,
-                         s->io_buffer_size);
+                         s->io_buffer_size, MEMTXATTRS_UNSPECIFIED);
         io->len = 0;
         ide_atapi_cmd_ok(s);
         m->dma_active = false;
@@ -329,7 +329,7 @@ static void pmac_ide_write(void *opaque, hwaddr addr, uint64_t val,
     case 0x8:
     case 0x16:
         if (size == 1) {
-            ide_cmd_write(&d->bus, 0, val);
+            ide_ctrl_write(&d->bus, 0, val);
         }
         break;
     case 0x20:
@@ -376,17 +376,17 @@ static void macio_ide_reset(DeviceState *dev)
     ide_bus_reset(&d->bus);
 }
 
-static int ide_nop_int(IDEDMA *dma, int x)
+static int ide_nop_int(const IDEDMA *dma, bool is_write)
 {
     return 0;
 }
 
-static int32_t ide_nop_int32(IDEDMA *dma, int32_t l)
+static int32_t ide_nop_int32(const IDEDMA *dma, int32_t l)
 {
     return 0;
 }
 
-static void ide_dbdma_start(IDEDMA *dma, IDEState *s,
+static void ide_dbdma_start(const IDEDMA *dma, IDEState *s,
                             BlockCompletionFunc *cb)
 {
     MACIOIDEState *m = container_of(dma, MACIOIDEState, dma);
@@ -449,7 +449,7 @@ static void macio_ide_initfn(Object *obj)
     SysBusDevice *d = SYS_BUS_DEVICE(obj);
     MACIOIDEState *s = MACIO_IDE(obj);
 
-    ide_bus_new(&s->bus, sizeof(s->bus), DEVICE(obj), 0, 2);
+    ide_bus_init(&s->bus, sizeof(s->bus), DEVICE(obj), 0, 2);
     memory_region_init_io(&s->mem, obj, &pmac_ide_ops, s, "pmac-ide", 0x1000);
     sysbus_init_mmio(d, &s->mem);
     sysbus_init_irq(d, &s->real_ide_irq);
@@ -459,7 +459,7 @@ static void macio_ide_initfn(Object *obj)
 
     object_property_add_link(obj, "dbdma", TYPE_MAC_DBDMA,
                              (Object **) &s->dbdma,
-                             qdev_prop_allow_set_link_before_realize, 0, NULL);
+                             qdev_prop_allow_set_link_before_realize, 0);
 }
 
 static Property macio_ide_properties[] = {
@@ -474,7 +474,7 @@ static void macio_ide_class_init(ObjectClass *oc, void *data)
 
     dc->realize = macio_ide_realizefn;
     dc->reset = macio_ide_reset;
-    dc->props = macio_ide_properties;
+    device_class_set_props(dc, macio_ide_properties);
     dc->vmsd = &vmstate_pmac;
     set_bit(DEVICE_CATEGORY_STORAGE, dc->categories);
 }

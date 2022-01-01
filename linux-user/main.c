@@ -20,13 +20,17 @@
 #include "qemu/osdep.h"
 #include "qemu-common.h"
 #include "qemu/units.h"
+#include "qemu/accel.h"
 #include "sysemu/tcg.h"
 #include "qemu-version.h"
 #include <sys/syscall.h>
 #include <sys/resource.h>
+#include <sys/shm.h>
+#include <linux/binfmts.h>
 
 #include "qapi/error.h"
 #include "qemu.h"
+#include "user-internals.h"
 #include "qemu/path.h"
 #include "qemu/queue.h"
 #include "qemu/config-file.h"
@@ -34,9 +38,10 @@
 #include "qemu/error-report.h"
 #include "qemu/help_option.h"
 #include "qemu/module.h"
-#include "cpu.h"
+#include "qemu/plugin.h"
 #include "exec/exec-all.h"
-#include "tcg.h"
+#include "exec/gdbstub.h"
+#include "tcg/tcg.h"
 #include "qemu/timer.h"
 #include "qemu/envlist.h"
 #include "qemu/guest-random.h"
@@ -45,19 +50,41 @@
 #include "target_elf.h"
 #include "cpu_loop-common.h"
 #include "crypto/init.h"
+#include "fd-trans.h"
+#include "signal-common.h"
+#include "loader.h"
+#include "user-mmap.h"
+
+#ifndef AT_FLAGS_PRESERVE_ARGV0
+#define AT_FLAGS_PRESERVE_ARGV0_BIT 0
+#define AT_FLAGS_PRESERVE_ARGV0 (1 << AT_FLAGS_PRESERVE_ARGV0_BIT)
+#endif
 
 char *exec_path;
 
 int singlestep;
 static const char *argv0;
-static int gdbstub_port;
+static const char *gdbstub;
 static envlist_t *envlist;
 static const char *cpu_model;
 static const char *cpu_type;
 static const char *seed_optarg;
 unsigned long mmap_min_addr;
-unsigned long guest_base;
-int have_guest_base;
+uintptr_t guest_base;
+bool have_guest_base;
+
+/*
+ * Used to implement backwards-compatibility for the `-strace`, and
+ * QEMU_STRACE options. Without this, the QEMU_LOG can be overwritten by
+ * -strace, or vice versa.
+ */
+static bool enable_strace;
+
+/*
+ * The last log mask given by the user in an environment variable or argument.
+ * Used to support command line arguments overriding environment variables.
+ */
+static int last_log_mask;
 
 /*
  * When running 32-on-64 we should make sure we can fit all of the possible
@@ -97,22 +124,6 @@ const char *qemu_uname_release;
    we allocate a bigger stack. Need a better solution, for example
    by remapping the process stack directly at the right place */
 unsigned long guest_stack_size = 8 * 1024 * 1024UL;
-
-void gemu_log(const char *fmt, ...)
-{
-    va_list ap;
-
-    va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
-    va_end(ap);
-}
-
-#if defined(TARGET_I386)
-int cpu_get_pic_interrupt(CPUX86State *env)
-{
-    return -1;
-}
-#endif
 
 /***********************************************************/
 /* Helper routines for implementing atomic operations.  */
@@ -193,23 +204,19 @@ CPUArchState *cpu_copy(CPUArchState *env)
     CPUState *new_cpu = cpu_create(cpu_type);
     CPUArchState *new_env = new_cpu->env_ptr;
     CPUBreakpoint *bp;
-    CPUWatchpoint *wp;
 
     /* Reset non arch specific state */
     cpu_reset(new_cpu);
 
+    new_cpu->tcg_cflags = cpu->tcg_cflags;
     memcpy(new_env, env, sizeof(CPUArchState));
 
     /* Clone all break/watchpoints.
        Note: Once we support ptrace with hw-debug register access, make sure
        BP_CPU break/watchpoints are handled correctly on clone. */
     QTAILQ_INIT(&new_cpu->breakpoints);
-    QTAILQ_INIT(&new_cpu->watchpoints);
     QTAILQ_FOREACH(bp, &cpu->breakpoints, entry) {
         cpu_breakpoint_insert(new_cpu, bp->pc, bp->flags, NULL);
-    }
-    QTAILQ_FOREACH(wp, &cpu->watchpoints, entry) {
-        cpu_watchpoint_insert(new_cpu, wp->vaddr, wp->len, wp->flags, NULL);
     }
 
     return new_env;
@@ -222,15 +229,11 @@ static void handle_arg_help(const char *arg)
 
 static void handle_arg_log(const char *arg)
 {
-    int mask;
-
-    mask = qemu_str_to_log_mask(arg);
-    if (!mask) {
+    last_log_mask = qemu_str_to_log_mask(arg);
+    if (!last_log_mask) {
         qemu_print_log_usage(stdout);
         exit(EXIT_FAILURE);
     }
-    qemu_log_needs_buffers();
-    qemu_set_log(mask);
 }
 
 static void handle_arg_dfilter(const char *arg)
@@ -309,7 +312,7 @@ static void handle_arg_seed(const char *arg)
 
 static void handle_arg_gdb(const char *arg)
 {
-    gdbstub_port = atoi(arg);
+    gdbstub = g_strdup(arg);
 }
 
 static void handle_arg_uname(const char *arg)
@@ -332,7 +335,7 @@ static void handle_arg_cpu(const char *arg)
 static void handle_arg_guest_base(const char *arg)
 {
     guest_base = strtol(arg, NULL, 0);
-    have_guest_base = 1;
+    have_guest_base = true;
 }
 
 static void handle_arg_reserved_va(const char *arg)
@@ -374,7 +377,7 @@ static void handle_arg_singlestep(const char *arg)
 
 static void handle_arg_strace(const char *arg)
 {
-    do_strace = 1;
+    enable_strace = true;
 }
 
 static void handle_arg_version(const char *arg)
@@ -384,17 +387,24 @@ static void handle_arg_version(const char *arg)
     exit(EXIT_SUCCESS);
 }
 
-static char *trace_file;
 static void handle_arg_trace(const char *arg)
 {
-    g_free(trace_file);
-    trace_file = trace_opt_parse(arg);
+    trace_opt_parse(arg);
 }
 
 #if defined(TARGET_XTENSA)
 static void handle_arg_abi_call0(const char *arg)
 {
     xtensa_set_abi_call0();
+}
+#endif
+
+static QemuPluginList plugins = QTAILQ_HEAD_INITIALIZER(plugins);
+
+#ifdef CONFIG_PLUGIN
+static void handle_arg_plugin(const char *arg)
+{
+    qemu_plugin_opt_parse(arg, &plugins);
 }
 #endif
 
@@ -449,6 +459,10 @@ static const struct qemu_argument arg_table[] = {
      "",           "Seed for pseudo-random number generator"},
     {"trace",      "QEMU_TRACE",       true,  handle_arg_trace,
      "",           "[[enable=]<pattern>][,events=<file>][,file=<file>]"},
+#ifdef CONFIG_PLUGIN
+    {"plugin",     "QEMU_PLUGIN",      true,  handle_arg_plugin,
+     "",           "[file=]<file>[,<argname>=<argvalue>]"},
+#endif
     {"version",    "QEMU_VERSION",     false, handle_arg_version,
      "",           "display version information and exit"},
 #if defined(TARGET_XTENSA)
@@ -615,7 +629,9 @@ int main(int argc, char **argv, char **envp)
     int i;
     int ret;
     int execfd;
+    int log_mask;
     unsigned long max_reserved_va;
+    bool preserve_argv0;
 
     error_init(argv[0]);
     module_call_init(MODULE_INIT_TRACE);
@@ -643,13 +659,21 @@ int main(int argc, char **argv, char **envp)
     cpu_model = NULL;
 
     qemu_add_opts(&qemu_trace_opts);
+    qemu_plugin_add_opts();
 
     optind = parse_args(argc, argv);
+
+    log_mask = last_log_mask | (enable_strace ? LOG_STRACE : 0);
+    if (log_mask) {
+        qemu_log_needs_buffers();
+        qemu_set_log(log_mask);
+    }
 
     if (!trace_init_backends()) {
         exit(1);
     }
-    trace_init_file(trace_file);
+    trace_init_file();
+    qemu_plugin_load_list(&plugins, &error_fatal);
 
     /* Zero out regs */
     memset(regs, 0, sizeof(struct target_pt_regs));
@@ -664,6 +688,9 @@ int main(int argc, char **argv, char **envp)
 
     init_qemu_uname_release();
 
+    /*
+     * Manage binfmt-misc open-binary flag
+     */
     execfd = qemu_getauxval(AT_EXECFD);
     if (execfd == 0) {
         execfd = open(exec_path, O_RDONLY);
@@ -673,14 +700,32 @@ int main(int argc, char **argv, char **envp)
         }
     }
 
+    /*
+     * get binfmt_misc flags
+     */
+    preserve_argv0 = !!(qemu_getauxval(AT_FLAGS) & AT_FLAGS_PRESERVE_ARGV0);
+
+    /*
+     * Manage binfmt-misc preserve-arg[0] flag
+     *    argv[optind]     full path to the binary
+     *    argv[optind + 1] original argv[0]
+     */
+    if (optind + 1 < argc && preserve_argv0) {
+        optind++;
+    }
+
     if (cpu_model == NULL) {
         cpu_model = cpu_get_model(get_elf_eflags(execfd));
     }
     cpu_type = parse_cpu_option(cpu_model);
 
     /* init tcg before creating CPUs and to get qemu_host_page_size */
-    tcg_exec_init(0);
+    {
+        AccelClass *ac = ACCEL_GET_CLASS(current_accel());
 
+        accel_init_interfaces(ac);
+        ac->init_machine(NULL);
+    }
     cpu = cpu_create(cpu_type);
     env = cpu->env_ptr;
     cpu_reset(cpu);
@@ -723,28 +768,6 @@ int main(int argc, char **argv, char **envp)
     envlist_free(envlist);
 
     /*
-     * Now that page sizes are configured in tcg_exec_init() we can do
-     * proper page alignment for guest_base.
-     */
-    guest_base = HOST_PAGE_ALIGN(guest_base);
-
-    if (reserved_va || have_guest_base) {
-        guest_base = init_guest_space(guest_base, reserved_va, 0,
-                                      have_guest_base);
-        if (guest_base == (unsigned long)-1) {
-            fprintf(stderr, "Unable to reserve 0x%lx bytes of virtual address "
-                    "space for use as guest address space (check your virtual "
-                    "memory ulimit setting or reserve less using -R option)\n",
-                    reserved_va);
-            exit(EXIT_FAILURE);
-        }
-
-        if (reserved_va) {
-            mmap_next_start = reserved_va;
-        }
-    }
-
-    /*
      * Read in mmap_min_addr kernel parameter.  This value is used
      * When loading the ELF image to determine whether guest_base
      * is needed.  It is also used in mmap_find_vma.
@@ -754,12 +777,24 @@ int main(int argc, char **argv, char **envp)
 
         if ((fp = fopen("/proc/sys/vm/mmap_min_addr", "r")) != NULL) {
             unsigned long tmp;
-            if (fscanf(fp, "%lu", &tmp) == 1) {
+            if (fscanf(fp, "%lu", &tmp) == 1 && tmp != 0) {
                 mmap_min_addr = tmp;
-                qemu_log_mask(CPU_LOG_PAGE, "host mmap_min_addr=0x%lx\n", mmap_min_addr);
+                qemu_log_mask(CPU_LOG_PAGE, "host mmap_min_addr=0x%lx\n",
+                              mmap_min_addr);
             }
             fclose(fp);
         }
+    }
+
+    /*
+     * We prefer to not make NULL pointers accessible to QEMU.
+     * If we're in a chroot with no /proc, fall back to 1 page.
+     */
+    if (mmap_min_addr == 0) {
+        mmap_min_addr = qemu_host_page_size;
+        qemu_log_mask(CPU_LOG_PAGE,
+                      "host mmap_min_addr=0x%lx (fallback)\n",
+                      mmap_min_addr);
     }
 
     /*
@@ -793,6 +828,8 @@ int main(int argc, char **argv, char **envp)
     cpu->opaque = ts;
     task_settid(ts);
 
+    fd_trans_init();
+
     ret = loader_exec(execfd, exec_path, target_argv, target_environ, regs,
         info, &bprm);
     if (ret != 0) {
@@ -807,8 +844,8 @@ int main(int argc, char **argv, char **envp)
     g_free(target_environ);
 
     if (qemu_loglevel_mask(CPU_LOG_PAGE)) {
-        qemu_log("guest_base  0x%lx\n", guest_base);
-        log_page_dump();
+        qemu_log("guest_base  %p\n", (void *)guest_base);
+        log_page_dump("binary load");
 
         qemu_log("start_brk   0x" TARGET_ABI_FMT_lx "\n", info->start_brk);
         qemu_log("end_code    0x" TARGET_ABI_FMT_lx "\n", info->end_code);
@@ -832,14 +869,13 @@ int main(int argc, char **argv, char **envp)
        generating the prologue until now so that the prologue can take
        the real value of GUEST_BASE into account.  */
     tcg_prologue_init(tcg_ctx);
-    tcg_region_init();
 
     target_cpu_copy_regs(env, regs);
 
-    if (gdbstub_port) {
-        if (gdbserver_start(gdbstub_port) < 0) {
-            fprintf(stderr, "qemu: could not open gdbserver on port %d\n",
-                    gdbstub_port);
+    if (gdbstub) {
+        if (gdbserver_start(gdbstub) < 0) {
+            fprintf(stderr, "qemu: could not open gdbserver on %s\n",
+                    gdbstub);
             exit(EXIT_FAILURE);
         }
         gdb_handlesig(cpu, 0);

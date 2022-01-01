@@ -1,2 +1,0 @@
-tests/qapi-schema/redefined-builtin.json: In struct 'size':
-tests/qapi-schema/redefined-builtin.json:2: built-in type 'size' is already defined

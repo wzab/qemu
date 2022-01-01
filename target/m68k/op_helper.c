@@ -21,20 +21,9 @@
 #include "exec/helper-proto.h"
 #include "exec/exec-all.h"
 #include "exec/cpu_ldst.h"
-#include "hw/semihosting/semihost.h"
+#include "semihosting/semihost.h"
 
-#if defined(CONFIG_USER_ONLY)
-
-void m68k_cpu_do_interrupt(CPUState *cs)
-{
-    cs->exception_index = -1;
-}
-
-static inline void do_interrupt_m68k_hardirq(CPUM68KState *env)
-{
-}
-
-#else
+#if !defined(CONFIG_USER_ONLY)
 
 static void cf_rte(CPUM68KState *env)
 {
@@ -42,8 +31,8 @@ static void cf_rte(CPUM68KState *env)
     uint32_t fmt;
 
     sp = env->aregs[7];
-    fmt = cpu_ldl_kernel(env, sp);
-    env->pc = cpu_ldl_kernel(env, sp + 4);
+    fmt = cpu_ldl_mmuidx_ra(env, sp, MMU_KERNEL_IDX, 0);
+    env->pc = cpu_ldl_mmuidx_ra(env, sp + 4, MMU_KERNEL_IDX, 0);
     sp |= (fmt >> 28) & 3;
     env->aregs[7] = sp + 8;
 
@@ -58,13 +47,13 @@ static void m68k_rte(CPUM68KState *env)
 
     sp = env->aregs[7];
 throwaway:
-    sr = cpu_lduw_kernel(env, sp);
+    sr = cpu_lduw_mmuidx_ra(env, sp, MMU_KERNEL_IDX, 0);
     sp += 2;
-    env->pc = cpu_ldl_kernel(env, sp);
+    env->pc = cpu_ldl_mmuidx_ra(env, sp, MMU_KERNEL_IDX, 0);
     sp += 4;
     if (m68k_feature(env, M68K_FEATURE_QUAD_MULDIV)) {
         /*  all except 68000 */
-        fmt = cpu_lduw_kernel(env, sp);
+        fmt = cpu_lduw_mmuidx_ra(env, sp, MMU_KERNEL_IDX, 0);
         sp += 2;
         switch (fmt >> 12) {
         case 0:
@@ -117,7 +106,7 @@ static const char *m68k_exception_name(int index)
     case EXCP_FORMAT:
         return "Format Error";
     case EXCP_UNINITIALIZED:
-        return "Unitialized Interruot";
+        return "Uninitialized Interrupt";
     case EXCP_SPURIOUS:
         return "Spurious Interrupt";
     case EXCP_INT_LEVEL_1:
@@ -260,12 +249,12 @@ static void cf_interrupt_all(CPUM68KState *env, int is_hw)
     /* ??? This could cause MMU faults.  */
     sp &= ~3;
     sp -= 4;
-    cpu_stl_kernel(env, sp, retaddr);
+    cpu_stl_mmuidx_ra(env, sp, retaddr, MMU_KERNEL_IDX, 0);
     sp -= 4;
-    cpu_stl_kernel(env, sp, fmt);
+    cpu_stl_mmuidx_ra(env, sp, fmt, MMU_KERNEL_IDX, 0);
     env->aregs[7] = sp;
     /* Jump to vector.  */
-    env->pc = cpu_ldl_kernel(env, env->vbr + vector);
+    env->pc = cpu_ldl_mmuidx_ra(env, env->vbr + vector, MMU_KERNEL_IDX, 0);
 }
 
 static inline void do_stack_frame(CPUM68KState *env, uint32_t *sp,
@@ -278,23 +267,24 @@ static inline void do_stack_frame(CPUM68KState *env, uint32_t *sp,
         switch (format) {
         case 4:
             *sp -= 4;
-            cpu_stl_kernel(env, *sp, env->pc);
+            cpu_stl_mmuidx_ra(env, *sp, env->pc, MMU_KERNEL_IDX, 0);
             *sp -= 4;
-            cpu_stl_kernel(env, *sp, addr);
+            cpu_stl_mmuidx_ra(env, *sp, addr, MMU_KERNEL_IDX, 0);
             break;
         case 3:
         case 2:
             *sp -= 4;
-            cpu_stl_kernel(env, *sp, addr);
+            cpu_stl_mmuidx_ra(env, *sp, addr, MMU_KERNEL_IDX, 0);
             break;
         }
         *sp -= 2;
-        cpu_stw_kernel(env, *sp, (format << 12) + (cs->exception_index << 2));
+        cpu_stw_mmuidx_ra(env, *sp, (format << 12) + (cs->exception_index << 2),
+                          MMU_KERNEL_IDX, 0);
     }
     *sp -= 4;
-    cpu_stl_kernel(env, *sp, retaddr);
+    cpu_stl_mmuidx_ra(env, *sp, retaddr, MMU_KERNEL_IDX, 0);
     *sp -= 2;
-    cpu_stw_kernel(env, *sp, sr);
+    cpu_stw_mmuidx_ra(env, *sp, sr, MMU_KERNEL_IDX, 0);
 }
 
 static void m68k_interrupt_all(CPUM68KState *env, int is_hw)
@@ -347,42 +337,61 @@ static void m68k_interrupt_all(CPUM68KState *env, int is_hw)
     cpu_m68k_set_sr(env, sr);
     sp = env->aregs[7];
 
-    sp &= ~1;
+    if (!m68k_feature(env, M68K_FEATURE_UNALIGNED_DATA)) {
+        sp &= ~1;
+    }
+
     if (cs->exception_index == EXCP_ACCESS) {
         if (env->mmu.fault) {
             cpu_abort(cs, "DOUBLE MMU FAULT\n");
         }
         env->mmu.fault = true;
+        /* push data 3 */
         sp -= 4;
-        cpu_stl_kernel(env, sp, 0); /* push data 3 */
+        cpu_stl_mmuidx_ra(env, sp, 0, MMU_KERNEL_IDX, 0);
+        /* push data 2 */
         sp -= 4;
-        cpu_stl_kernel(env, sp, 0); /* push data 2 */
+        cpu_stl_mmuidx_ra(env, sp, 0, MMU_KERNEL_IDX, 0);
+        /* push data 1 */
         sp -= 4;
-        cpu_stl_kernel(env, sp, 0); /* push data 1 */
+        cpu_stl_mmuidx_ra(env, sp, 0, MMU_KERNEL_IDX, 0);
+        /* write back 1 / push data 0 */
         sp -= 4;
-        cpu_stl_kernel(env, sp, 0); /* write back 1 / push data 0 */
+        cpu_stl_mmuidx_ra(env, sp, 0, MMU_KERNEL_IDX, 0);
+        /* write back 1 address */
         sp -= 4;
-        cpu_stl_kernel(env, sp, 0); /* write back 1 address */
+        cpu_stl_mmuidx_ra(env, sp, 0, MMU_KERNEL_IDX, 0);
+        /* write back 2 data */
         sp -= 4;
-        cpu_stl_kernel(env, sp, 0); /* write back 2 data */
+        cpu_stl_mmuidx_ra(env, sp, 0, MMU_KERNEL_IDX, 0);
+        /* write back 2 address */
         sp -= 4;
-        cpu_stl_kernel(env, sp, 0); /* write back 2 address */
+        cpu_stl_mmuidx_ra(env, sp, 0, MMU_KERNEL_IDX, 0);
+        /* write back 3 data */
         sp -= 4;
-        cpu_stl_kernel(env, sp, 0); /* write back 3 data */
+        cpu_stl_mmuidx_ra(env, sp, 0, MMU_KERNEL_IDX, 0);
+        /* write back 3 address */
         sp -= 4;
-        cpu_stl_kernel(env, sp, env->mmu.ar); /* write back 3 address */
+        cpu_stl_mmuidx_ra(env, sp, env->mmu.ar, MMU_KERNEL_IDX, 0);
+        /* fault address */
         sp -= 4;
-        cpu_stl_kernel(env, sp, env->mmu.ar); /* fault address */
+        cpu_stl_mmuidx_ra(env, sp, env->mmu.ar, MMU_KERNEL_IDX, 0);
+        /* write back 1 status */
         sp -= 2;
-        cpu_stw_kernel(env, sp, 0); /* write back 1 status */
+        cpu_stw_mmuidx_ra(env, sp, 0, MMU_KERNEL_IDX, 0);
+        /* write back 2 status */
         sp -= 2;
-        cpu_stw_kernel(env, sp, 0); /* write back 2 status */
+        cpu_stw_mmuidx_ra(env, sp, 0, MMU_KERNEL_IDX, 0);
+        /* write back 3 status */
         sp -= 2;
-        cpu_stw_kernel(env, sp, 0); /* write back 3 status */
+        cpu_stw_mmuidx_ra(env, sp, 0, MMU_KERNEL_IDX, 0);
+        /* special status word */
         sp -= 2;
-        cpu_stw_kernel(env, sp, env->mmu.ssw); /* special status word */
+        cpu_stw_mmuidx_ra(env, sp, env->mmu.ssw, MMU_KERNEL_IDX, 0);
+        /* effective address */
         sp -= 4;
-        cpu_stl_kernel(env, sp, env->mmu.ar); /* effective address */
+        cpu_stl_mmuidx_ra(env, sp, env->mmu.ar, MMU_KERNEL_IDX, 0);
+
         do_stack_frame(env, &sp, 7, oldsr, 0, retaddr);
         env->mmu.fault = false;
         if (qemu_loglevel_mask(CPU_LOG_INT)) {
@@ -414,7 +423,7 @@ static void m68k_interrupt_all(CPUM68KState *env, int is_hw)
 
     env->aregs[7] = sp;
     /* Jump to vector.  */
-    env->pc = cpu_ldl_kernel(env, env->vbr + vector);
+    env->pc = cpu_ldl_mmuidx_ra(env, env->vbr + vector, MMU_KERNEL_IDX, 0);
 }
 
 static void do_interrupt_all(CPUM68KState *env, int is_hw)
@@ -451,7 +460,17 @@ void m68k_cpu_transaction_failed(CPUState *cs, hwaddr physaddr, vaddr addr,
 
     if (m68k_feature(env, M68K_FEATURE_M68040)) {
         env->mmu.mmusr = 0;
-        env->mmu.ssw |= M68K_ATC_040;
+
+        /*
+         * According to the MC68040 users manual the ATC bit of the SSW is
+         * used to distinguish between ATC faults and physical bus errors.
+         * In the case of a bus error e.g. during nubus read from an empty
+         * slot this bit should not be set
+         */
+        if (response != MEMTX_DECODE_ERROR) {
+            env->mmu.ssw |= M68K_ATC_040;
+        }
+
         /* FIXME: manage MMU table access error */
         env->mmu.ssw &= ~M68K_TM_040;
         if (env->sr & SR_S) { /* SUPERVISOR */
@@ -485,7 +504,6 @@ void m68k_cpu_transaction_failed(CPUState *cs, hwaddr physaddr, vaddr addr,
         cpu_loop_exit(cs);
     }
 }
-#endif
 
 bool m68k_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
 {
@@ -506,6 +524,8 @@ bool m68k_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
     }
     return false;
 }
+
+#endif /* !CONFIG_USER_ONLY */
 
 static void raise_exception_ra(CPUM68KState *env, int tt, uintptr_t raddr)
 {
@@ -752,9 +772,9 @@ static void do_cas2l(CPUM68KState *env, uint32_t regs, uint32_t a1, uint32_t a2,
     uint32_t u2 = env->dregs[Du2];
     uint32_t l1, l2;
     uintptr_t ra = GETPC();
-#if defined(CONFIG_ATOMIC64) && !defined(CONFIG_USER_ONLY)
+#if defined(CONFIG_ATOMIC64)
     int mmu_idx = cpu_mmu_index(env, 0);
-    TCGMemOpIdx oi;
+    MemOpIdx oi = make_memop_idx(MO_BEQ, mmu_idx);
 #endif
 
     if (parallel) {
@@ -764,23 +784,13 @@ static void do_cas2l(CPUM68KState *env, uint32_t regs, uint32_t a1, uint32_t a2,
         if ((a1 & 7) == 0 && a2 == a1 + 4) {
             c = deposit64(c2, 32, 32, c1);
             u = deposit64(u2, 32, 32, u1);
-#ifdef CONFIG_USER_ONLY
-            l = helper_atomic_cmpxchgq_be(env, a1, c, u);
-#else
-            oi = make_memop_idx(MO_BEQ, mmu_idx);
-            l = helper_atomic_cmpxchgq_be_mmu(env, a1, c, u, oi, ra);
-#endif
+            l = cpu_atomic_cmpxchgq_be_mmu(env, a1, c, u, oi, ra);
             l1 = l >> 32;
             l2 = l;
         } else if ((a2 & 7) == 0 && a1 == a2 + 4) {
             c = deposit64(c1, 32, 32, c2);
             u = deposit64(u1, 32, 32, u2);
-#ifdef CONFIG_USER_ONLY
-            l = helper_atomic_cmpxchgq_be(env, a2, c, u);
-#else
-            oi = make_memop_idx(MO_BEQ, mmu_idx);
-            l = helper_atomic_cmpxchgq_be_mmu(env, a2, c, u, oi, ra);
-#endif
+            l = cpu_atomic_cmpxchgq_be_mmu(env, a2, c, u, oi, ra);
             l2 = l >> 32;
             l1 = l;
         } else

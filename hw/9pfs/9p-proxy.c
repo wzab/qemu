@@ -10,6 +10,11 @@
  * the COPYING file in the top-level directory.
  */
 
+/*
+ * Not so fast! You might want to read the 9p developer docs first:
+ * https://wiki.qemu.org/Documentation/9p
+ */
+
 #include "qemu/osdep.h"
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -537,7 +542,8 @@ static int v9fs_request(V9fsProxy *proxy, int type, void *response, ...)
     }
 
     /* marshal the header details */
-    proxy_marshal(iovec, 0, "dd", header.type, header.size);
+    retval = proxy_marshal(iovec, 0, "dd", header.type, header.size);
+    assert(retval == 4 * 2);
     header.size += PROXY_HDR_SZ;
 
     retval = qemu_write_full(proxy->sockfd, iovec->iov_base, header.size);
@@ -1114,7 +1120,7 @@ static int connect_namedsocket(const char *path, Error **errp)
     return sockfd;
 }
 
-static void error_append_socket_sockfd_hint(Error **errp)
+static void error_append_socket_sockfd_hint(Error *const *errp)
 {
     error_append_hint(errp, "Either specify socket=/some/path where /some/path"
                       " points to a listening AF_UNIX socket or sock_fd=fd"
@@ -1139,10 +1145,10 @@ static int proxy_parse_opts(QemuOpts *opts, FsDriverEntry *fs, Error **errp)
     }
     if (socket) {
         fs->path = g_strdup(socket);
-        fs->export_flags = V9FS_PROXY_SOCK_NAME;
+        fs->export_flags |= V9FS_PROXY_SOCK_NAME;
     } else {
         fs->path = g_strdup(sock_fd);
-        fs->export_flags = V9FS_PROXY_SOCK_FD;
+        fs->export_flags |= V9FS_PROXY_SOCK_FD;
     }
     return 0;
 }

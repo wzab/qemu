@@ -16,6 +16,7 @@
 #include "hw/qdev-properties.h"
 #include "qemu/module.h"
 #include "qemu/log.h"
+#include "qom/object.h"
 
 /* Common timer implementation.  */
 
@@ -180,19 +181,20 @@ static arm_timer_state *arm_timer_init(uint32_t freq)
     s->control = TIMER_CTRL_IE;
 
     s->timer = ptimer_init(arm_timer_tick, s, PTIMER_POLICY_DEFAULT);
-    vmstate_register(NULL, -1, &vmstate_arm_timer, s);
+    vmstate_register(NULL, VMSTATE_INSTANCE_ID_ANY, &vmstate_arm_timer, s);
     return s;
 }
 
-/* ARM PrimeCell SP804 dual timer module.
+/*
+ * ARM PrimeCell SP804 dual timer module.
  * Docs at
- * http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.ddi0271d/index.html
-*/
+ * https://developer.arm.com/documentation/ddi0271/latest/
+ */
 
 #define TYPE_SP804 "sp804"
-#define SP804(obj) OBJECT_CHECK(SP804State, (obj), TYPE_SP804)
+OBJECT_DECLARE_SIMPLE_TYPE(SP804State, SP804)
 
-typedef struct SP804State {
+struct SP804State {
     SysBusDevice parent_obj;
 
     MemoryRegion iomem;
@@ -200,7 +202,7 @@ typedef struct SP804State {
     uint32_t freq0, freq1;
     int level[2];
     qemu_irq irq;
-} SP804State;
+};
 
 static const uint8_t sp804_ids[] = {
     /* Timer ID */
@@ -310,15 +312,14 @@ static void sp804_realize(DeviceState *dev, Error **errp)
 /* Integrator/CP timer module.  */
 
 #define TYPE_INTEGRATOR_PIT "integrator_pit"
-#define INTEGRATOR_PIT(obj) \
-    OBJECT_CHECK(icp_pit_state, (obj), TYPE_INTEGRATOR_PIT)
+OBJECT_DECLARE_SIMPLE_TYPE(icp_pit_state, INTEGRATOR_PIT)
 
-typedef struct {
+struct icp_pit_state {
     SysBusDevice parent_obj;
 
     MemoryRegion iomem;
     arm_timer_state *timer[3];
-} icp_pit_state;
+};
 
 static uint64_t icp_pit_read(void *opaque, hwaddr offset,
                              unsigned size)
@@ -397,7 +398,7 @@ static void sp804_class_init(ObjectClass *klass, void *data)
     DeviceClass *k = DEVICE_CLASS(klass);
 
     k->realize = sp804_realize;
-    k->props = sp804_properties;
+    device_class_set_props(k, sp804_properties);
     k->vmsd = &vmstate_sp804;
 }
 

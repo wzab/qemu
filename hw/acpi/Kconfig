@@ -7,6 +7,9 @@ config ACPI_X86
     select ACPI_NVDIMM
     select ACPI_CPU_HOTPLUG
     select ACPI_MEMORY_HOTPLUG
+    select ACPI_HMAT
+    select ACPI_PIIX4
+    select ACPI_PCIHP
 
 config ACPI_X86_ICH
     bool
@@ -23,6 +26,22 @@ config ACPI_NVDIMM
     bool
     depends on ACPI
 
+config ACPI_PIIX4
+    bool
+    depends on ACPI
+
+config ACPI_PCIHP
+    bool
+    depends on ACPI
+
+config ACPI_HMAT
+    bool
+    depends on ACPI
+
+config ACPI_APEI
+    bool
+    depends on ACPI
+
 config ACPI_PCI
     bool
     depends on ACPI && PCI
@@ -32,6 +51,12 @@ config ACPI_VMGENID
     default y
     depends on PC
 
-config ACPI_HW_REDUCED
+config ACPI_VIOT
     bool
     depends on ACPI
+
+config ACPI_HW_REDUCED
+    bool
+    select ACPI
+    select ACPI_MEMORY_HOTPLUG
+    select ACPI_NVDIMM

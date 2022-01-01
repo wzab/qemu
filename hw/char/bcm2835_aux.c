@@ -24,6 +24,7 @@
 #include "hw/char/bcm2835_aux.h"
 #include "hw/irq.h"
 #include "hw/qdev-properties.h"
+#include "hw/qdev-properties-system.h"
 #include "migration/vmstate.h"
 #include "qemu/log.h"
 #include "qemu/module.h"
@@ -249,7 +250,9 @@ static const MemoryRegionOps bcm2835_aux_ops = {
     .read = bcm2835_aux_read,
     .write = bcm2835_aux_write,
     .endianness = DEVICE_NATIVE_ENDIAN,
-    .valid.min_access_size = 4,
+    .impl.min_access_size = 4,
+    .impl.max_access_size = 4,
+    .valid.min_access_size = 1,
     .valid.max_access_size = 4,
 };
 
@@ -299,7 +302,7 @@ static void bcm2835_aux_class_init(ObjectClass *oc, void *data)
     dc->realize = bcm2835_aux_realize;
     dc->vmsd = &vmstate_bcm2835_aux;
     set_bit(DEVICE_CATEGORY_INPUT, dc->categories);
-    dc->props = bcm2835_aux_props;
+    device_class_set_props(dc, bcm2835_aux_props);
 }
 
 static const TypeInfo bcm2835_aux_info = {

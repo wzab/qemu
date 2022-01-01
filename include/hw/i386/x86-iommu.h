@@ -23,27 +23,15 @@
 #include "hw/sysbus.h"
 #include "hw/pci/pci.h"
 #include "hw/pci/msi.h"
+#include "qom/object.h"
 
 #define  TYPE_X86_IOMMU_DEVICE  ("x86-iommu")
-#define  X86_IOMMU_DEVICE(obj) \
-    OBJECT_CHECK(X86IOMMUState, (obj), TYPE_X86_IOMMU_DEVICE)
-#define  X86_IOMMU_CLASS(klass) \
-    OBJECT_CLASS_CHECK(X86IOMMUClass, (klass), TYPE_X86_IOMMU_DEVICE)
-#define  X86_IOMMU_GET_CLASS(obj) \
-    OBJECT_GET_CLASS(X86IOMMUClass, obj, TYPE_X86_IOMMU_DEVICE)
+OBJECT_DECLARE_TYPE(X86IOMMUState, X86IOMMUClass, X86_IOMMU_DEVICE)
 
 #define X86_IOMMU_SID_INVALID             (0xffff)
 
-typedef struct X86IOMMUState X86IOMMUState;
-typedef struct X86IOMMUClass X86IOMMUClass;
 typedef struct X86IOMMUIrq X86IOMMUIrq;
 typedef struct X86IOMMU_MSIMessage X86IOMMU_MSIMessage;
-
-typedef enum IommuType {
-    TYPE_INTEL,
-    TYPE_AMD,
-    TYPE_NONE
-} IommuType;
 
 struct X86IOMMUClass {
     SysBusDeviceClass parent;
@@ -77,7 +65,6 @@ struct X86IOMMUState {
     OnOffAuto intr_supported;   /* Whether vIOMMU supports IR */
     bool dt_supported;          /* Whether vIOMMU supports DT */
     bool pt_supported;          /* Whether vIOMMU supports pass-through */
-    IommuType type;             /* IOMMU type - AMD/Intel     */
     QLIST_HEAD(, IEC_Notifier) iec_notifiers; /* IEC notify list */
 };
 
@@ -145,11 +132,6 @@ struct X86IOMMU_MSIMessage {
  * @return: pointer to default IOMMU device
  */
 X86IOMMUState *x86_iommu_get_default(void);
-
-/*
- * x86_iommu_get_type - get IOMMU type
- */
-IommuType x86_iommu_get_type(void);
 
 /**
  * x86_iommu_iec_register_notifier - register IEC (Interrupt Entry

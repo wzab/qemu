@@ -7,7 +7,7 @@
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
- * version 2 of the License, or (at your option) any later version.
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -452,7 +452,8 @@ static inline int get_dwords(OHCIState *ohci,
     addr += ohci->localmem_base;
 
     for (i = 0; i < num; i++, buf++, addr += sizeof(*buf)) {
-        if (dma_memory_read(ohci->as, addr, buf, sizeof(*buf))) {
+        if (dma_memory_read(ohci->as, addr,
+                            buf, sizeof(*buf), MEMTXATTRS_UNSPECIFIED)) {
             return -1;
         }
         *buf = le32_to_cpu(*buf);
@@ -471,7 +472,8 @@ static inline int put_dwords(OHCIState *ohci,
 
     for (i = 0; i < num; i++, buf++, addr += sizeof(*buf)) {
         uint32_t tmp = cpu_to_le32(*buf);
-        if (dma_memory_write(ohci->as, addr, &tmp, sizeof(tmp))) {
+        if (dma_memory_write(ohci->as, addr,
+                             &tmp, sizeof(tmp), MEMTXATTRS_UNSPECIFIED)) {
             return -1;
         }
     }
@@ -488,7 +490,8 @@ static inline int get_words(OHCIState *ohci,
     addr += ohci->localmem_base;
 
     for (i = 0; i < num; i++, buf++, addr += sizeof(*buf)) {
-        if (dma_memory_read(ohci->as, addr, buf, sizeof(*buf))) {
+        if (dma_memory_read(ohci->as, addr,
+                            buf, sizeof(*buf), MEMTXATTRS_UNSPECIFIED)) {
             return -1;
         }
         *buf = le16_to_cpu(*buf);
@@ -507,7 +510,8 @@ static inline int put_words(OHCIState *ohci,
 
     for (i = 0; i < num; i++, buf++, addr += sizeof(*buf)) {
         uint16_t tmp = cpu_to_le16(*buf);
-        if (dma_memory_write(ohci->as, addr, &tmp, sizeof(tmp))) {
+        if (dma_memory_write(ohci->as, addr,
+                             &tmp, sizeof(tmp), MEMTXATTRS_UNSPECIFIED)) {
             return -1;
         }
     }
@@ -537,8 +541,8 @@ static inline int ohci_read_iso_td(OHCIState *ohci,
 static inline int ohci_read_hcca(OHCIState *ohci,
                                  dma_addr_t addr, struct ohci_hcca *hcca)
 {
-    return dma_memory_read(ohci->as, addr + ohci->localmem_base,
-                           hcca, sizeof(*hcca));
+    return dma_memory_read(ohci->as, addr + ohci->localmem_base, hcca,
+                           sizeof(*hcca), MEMTXATTRS_UNSPECIFIED);
 }
 
 static inline int ohci_put_ed(OHCIState *ohci,
@@ -572,7 +576,7 @@ static inline int ohci_put_hcca(OHCIState *ohci,
     return dma_memory_write(ohci->as,
                             addr + ohci->localmem_base + HCCA_WRITEBACK_OFFSET,
                             (char *)hcca + HCCA_WRITEBACK_OFFSET,
-                            HCCA_WRITEBACK_SIZE);
+                            HCCA_WRITEBACK_SIZE, MEMTXATTRS_UNSPECIFIED);
 }
 
 /* Read/Write the contents of a TD from/to main memory.  */
@@ -586,7 +590,8 @@ static int ohci_copy_td(OHCIState *ohci, struct ohci_td *td,
     if (n > len)
         n = len;
 
-    if (dma_memory_rw(ohci->as, ptr + ohci->localmem_base, buf, n, dir)) {
+    if (dma_memory_rw(ohci->as, ptr + ohci->localmem_base, buf,
+                      n, dir, MEMTXATTRS_UNSPECIFIED)) {
         return -1;
     }
     if (n == len) {
@@ -595,7 +600,7 @@ static int ohci_copy_td(OHCIState *ohci, struct ohci_td *td,
     ptr = td->be & ~0xfffu;
     buf += n;
     if (dma_memory_rw(ohci->as, ptr + ohci->localmem_base, buf,
-                      len - n, dir)) {
+                      len - n, dir, MEMTXATTRS_UNSPECIFIED)) {
         return -1;
     }
     return 0;
@@ -613,7 +618,8 @@ static int ohci_copy_iso_td(OHCIState *ohci,
     if (n > len)
         n = len;
 
-    if (dma_memory_rw(ohci->as, ptr + ohci->localmem_base, buf, n, dir)) {
+    if (dma_memory_rw(ohci->as, ptr + ohci->localmem_base, buf,
+                      n, dir, MEMTXATTRS_UNSPECIFIED)) {
         return -1;
     }
     if (n == len) {
@@ -622,7 +628,7 @@ static int ohci_copy_iso_td(OHCIState *ohci,
     ptr = end_addr & ~0xfffu;
     buf += n;
     if (dma_memory_rw(ohci->as, ptr + ohci->localmem_base, buf,
-                      len - n, dir)) {
+                      len - n, dir, MEMTXATTRS_UNSPECIFIED)) {
         return -1;
     }
     return 0;
@@ -691,6 +697,10 @@ static int ohci_service_iso_td(OHCIState *ohci, struct ohci_ed *ed,
            the next ISO TD of the same ED */
         trace_usb_ohci_iso_td_relative_frame_number_big(relative_frame_number,
                                                         frame_count);
+        if (OHCI_CC_DATAOVERRUN == OHCI_BM(iso_td.flags, TD_CC)) {
+            /* avoid infinite loop */
+            return 1;
+        }
         OHCI_SET_BM(iso_td.flags, TD_CC, OHCI_CC_DATAOVERRUN);
         ed->head &= ~OHCI_DPTR_MASK;
         ed->head |= (iso_td.next & OHCI_DPTR_MASK);
@@ -731,7 +741,11 @@ static int ohci_service_iso_td(OHCIState *ohci, struct ohci_ed *ed,
     }
 
     start_offset = iso_td.offset[relative_frame_number];
-    next_offset = iso_td.offset[relative_frame_number + 1];
+    if (relative_frame_number < frame_count) {
+        next_offset = iso_td.offset[relative_frame_number + 1];
+    } else {
+        next_offset = iso_td.be;
+    }
 
     if (!(OHCI_BM(start_offset, TD_PSW_CC) & 0xe) || 
         ((relative_frame_number < frame_count) && 
@@ -764,7 +778,12 @@ static int ohci_service_iso_td(OHCIState *ohci, struct ohci_ed *ed,
         }
     } else {
         /* Last packet in the ISO TD */
-        end_addr = iso_td.be;
+        end_addr = next_offset;
+    }
+
+    if (start_addr > end_addr) {
+        trace_usb_ohci_iso_td_bad_cc_overrun(start_addr, end_addr);
+        return 1;
     }
 
     if ((start_addr & OHCI_PAGE_MASK) != (end_addr & OHCI_PAGE_MASK)) {
@@ -772,6 +791,9 @@ static int ohci_service_iso_td(OHCIState *ohci, struct ohci_ed *ed,
             - (start_addr & OHCI_OFFSET_MASK);
     } else {
         len = end_addr - start_addr + 1;
+    }
+    if (len > sizeof(ohci->usb_buf)) {
+        len = sizeof(ohci->usb_buf);
     }
 
     if (len && dir != OHCI_TD_DIR_IN) {
@@ -975,7 +997,15 @@ static int ohci_service_td(OHCIState *ohci, struct ohci_ed *ed)
         if ((td.cbp & 0xfffff000) != (td.be & 0xfffff000)) {
             len = (td.be & 0xfff) + 0x1001 - (td.cbp & 0xfff);
         } else {
+            if (td.cbp > td.be) {
+                trace_usb_ohci_iso_td_bad_cc_overrun(td.cbp, td.be);
+                ohci_die(ohci);
+                return 1;
+            }
             len = (td.be - td.cbp) + 1;
+        }
+        if (len > sizeof(ohci->usb_buf)) {
+            len = sizeof(ohci->usb_buf);
         }
 
         pktlen = len;
@@ -1102,7 +1132,7 @@ static int ohci_service_td(OHCIState *ohci, struct ohci_ed *ed)
                 OHCI_SET_BM(td.flags, TD_EC, 3);
                 break;
             }
-            /* An error occured so we have to clear the interrupt counter. See
+            /* An error occurred so we have to clear the interrupt counter. See
              * spec at 6.4.4 on page 104 */
             ohci->done_count = 0;
         }
@@ -1870,21 +1900,6 @@ void ohci_sysbus_die(struct OHCIState *ohci)
     ohci_bus_stop(ohci);
 }
 
-#define TYPE_SYSBUS_OHCI "sysbus-ohci"
-#define SYSBUS_OHCI(obj) OBJECT_CHECK(OHCISysBusState, (obj), TYPE_SYSBUS_OHCI)
-
-typedef struct {
-    /*< private >*/
-    SysBusDevice parent_obj;
-    /*< public >*/
-
-    OHCIState ohci;
-    char *masterbus;
-    uint32_t num_ports;
-    uint32_t firstport;
-    dma_addr_t dma_offset;
-} OHCISysBusState;
-
 static void ohci_realize_pxa(DeviceState *dev, Error **errp)
 {
     OHCISysBusState *s = SYSBUS_OHCI(dev);
@@ -2000,7 +2015,7 @@ static void ohci_sysbus_class_init(ObjectClass *klass, void *data)
     dc->realize = ohci_realize_pxa;
     set_bit(DEVICE_CATEGORY_USB, dc->categories);
     dc->desc = "OHCI USB Controller";
-    dc->props = ohci_sysbus_properties;
+    device_class_set_props(dc, ohci_sysbus_properties);
     dc->reset = usb_ohci_reset_sysbus;
 }
 

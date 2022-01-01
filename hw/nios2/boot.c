@@ -31,13 +31,13 @@
 #include "qemu/osdep.h"
 #include "qemu/units.h"
 #include "qemu-common.h"
-#include "cpu.h"
+#include "qemu/datadir.h"
 #include "qemu/option.h"
 #include "qemu/config-file.h"
 #include "qemu/error-report.h"
 #include "sysemu/device_tree.h"
 #include "sysemu/reset.h"
-#include "sysemu/sysemu.h"
+#include "hw/boards.h"
 #include "hw/loader.h"
 #include "elf.h"
 
@@ -109,6 +109,7 @@ static int nios2_load_dtb(struct nios2_boot_info bi, const uint32_t ramsize,
     }
 
     cpu_physical_memory_write(bi.fdt, fdt, fdt_size);
+    g_free(fdt);
     return fdt_size;
 }
 
@@ -118,16 +119,14 @@ void nios2_load_kernel(Nios2CPU *cpu, hwaddr ddr_base,
                             const char *dtb_filename,
                             void (*machine_cpu_reset)(Nios2CPU *))
 {
-    QemuOpts *machine_opts;
     const char *kernel_filename;
     const char *kernel_cmdline;
     const char *dtb_arg;
     char *filename = NULL;
 
-    machine_opts = qemu_get_machine_opts();
-    kernel_filename = qemu_opt_get(machine_opts, "kernel");
-    kernel_cmdline = qemu_opt_get(machine_opts, "append");
-    dtb_arg = qemu_opt_get(machine_opts, "dtb");
+    kernel_filename = current_machine->kernel_filename;
+    kernel_cmdline = current_machine->kernel_cmdline;
+    dtb_arg = current_machine->dtb;
     /* default to pcbios dtb as passed by machine_init */
     if (!dtb_arg) {
         filename = qemu_find_file(QEMU_FILE_TYPE_BIOS, dtb_filename);
@@ -138,7 +137,7 @@ void nios2_load_kernel(Nios2CPU *cpu, hwaddr ddr_base,
 
     if (kernel_filename) {
         int kernel_size, fdt_size;
-        uint64_t entry, low, high;
+        uint64_t entry, high;
         int big_endian = 0;
 
 #ifdef TARGET_WORDS_BIGENDIAN
@@ -147,7 +146,7 @@ void nios2_load_kernel(Nios2CPU *cpu, hwaddr ddr_base,
 
         /* Boots a kernel elf binary. */
         kernel_size = load_elf(kernel_filename, NULL, NULL, NULL,
-                               &entry, &low, &high,
+                               &entry, NULL, &high, NULL,
                                big_endian, EM_ALTERA_NIOS2, 0, 0);
         if ((uint32_t)entry == 0xc0000000) {
             /*
@@ -158,7 +157,7 @@ void nios2_load_kernel(Nios2CPU *cpu, hwaddr ddr_base,
              */
             kernel_size = load_elf(kernel_filename, NULL,
                                    translate_kernel_address, NULL,
-                                   &entry, NULL, NULL,
+                                   &entry, NULL, NULL, NULL,
                                    big_endian, EM_ALTERA_NIOS2, 0, 0);
             boot_info.bootstrap_pc = ddr_base + 0xc0000000 +
                 (entry & 0x07ffffff);
@@ -180,7 +179,7 @@ void nios2_load_kernel(Nios2CPU *cpu, hwaddr ddr_base,
         /* Not an ELF image nor an u-boot image, try a RAW image. */
         if (kernel_size < 0) {
             kernel_size = load_image_targphys(kernel_filename, ddr_base,
-                                              ram_size);
+                                              ramsize);
             boot_info.bootstrap_pc = ddr_base;
             high = ddr_base + kernel_size;
         }
@@ -197,11 +196,11 @@ void nios2_load_kernel(Nios2CPU *cpu, hwaddr ddr_base,
 
             initrd_size = load_ramdisk(initrd_filename,
                                        boot_info.initrd_start,
-                                       ram_size - initrd_offset);
+                                       ramsize - initrd_offset);
             if (initrd_size < 0) {
                 initrd_size = load_image_targphys(initrd_filename,
                                                   boot_info.initrd_start,
-                                                  ram_size - initrd_offset);
+                                                  ramsize - initrd_offset);
             }
             if (initrd_size < 0) {
                 error_report("could not load initrd '%s'",
@@ -215,7 +214,7 @@ void nios2_load_kernel(Nios2CPU *cpu, hwaddr ddr_base,
 
         /* Device tree must be placed right after initrd (if available) */
         boot_info.fdt = high;
-        fdt_size = nios2_load_dtb(boot_info, ram_size, kernel_cmdline,
+        fdt_size = nios2_load_dtb(boot_info, ramsize, kernel_cmdline,
                                   /* Preference a -dtb argument */
                                   dtb_arg ? dtb_arg : filename);
         high += fdt_size;

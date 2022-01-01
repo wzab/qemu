@@ -98,8 +98,8 @@ static int zrle_compress_data(VncState *vs, int level)
     /* set pointers */
     zstream->next_in = vs->zrle->zrle.buffer;
     zstream->avail_in = vs->zrle->zrle.offset;
-    zstream->next_out = vs->zrle->zlib.buffer + vs->zrle->zlib.offset;
-    zstream->avail_out = vs->zrle->zlib.capacity - vs->zrle->zlib.offset;
+    zstream->next_out = vs->zrle->zlib.buffer;
+    zstream->avail_out = vs->zrle->zlib.capacity;
     zstream->data_type = Z_BINARY;
 
     /* start encoding */
@@ -199,56 +199,56 @@ static void zrle_write_u8(VncState *vs, uint8_t value)
 
 #define ZRLE_BPP 8
 #define ZYWRLE_ENDIAN ENDIAN_NO
-#include "vnc-enc-zrle.inc.c"
+#include "vnc-enc-zrle.c.inc"
 #undef ZRLE_BPP
 
 #define ZRLE_BPP 15
 #undef ZYWRLE_ENDIAN
 #define ZYWRLE_ENDIAN ENDIAN_LITTLE
-#include "vnc-enc-zrle.inc.c"
+#include "vnc-enc-zrle.c.inc"
 
 #undef ZYWRLE_ENDIAN
 #define ZYWRLE_ENDIAN ENDIAN_BIG
-#include "vnc-enc-zrle.inc.c"
+#include "vnc-enc-zrle.c.inc"
 
 #undef ZRLE_BPP
 #define ZRLE_BPP 16
 #undef ZYWRLE_ENDIAN
 #define ZYWRLE_ENDIAN ENDIAN_LITTLE
-#include "vnc-enc-zrle.inc.c"
+#include "vnc-enc-zrle.c.inc"
 
 #undef ZYWRLE_ENDIAN
 #define ZYWRLE_ENDIAN ENDIAN_BIG
-#include "vnc-enc-zrle.inc.c"
+#include "vnc-enc-zrle.c.inc"
 
 #undef ZRLE_BPP
 #define ZRLE_BPP 32
 #undef ZYWRLE_ENDIAN
 #define ZYWRLE_ENDIAN ENDIAN_LITTLE
-#include "vnc-enc-zrle.inc.c"
+#include "vnc-enc-zrle.c.inc"
 
 #undef ZYWRLE_ENDIAN
 #define ZYWRLE_ENDIAN ENDIAN_BIG
-#include "vnc-enc-zrle.inc.c"
+#include "vnc-enc-zrle.c.inc"
 
 #define ZRLE_COMPACT_PIXEL 24a
 #undef ZYWRLE_ENDIAN
 #define ZYWRLE_ENDIAN ENDIAN_LITTLE
-#include "vnc-enc-zrle.inc.c"
+#include "vnc-enc-zrle.c.inc"
 
 #undef ZYWRLE_ENDIAN
 #define ZYWRLE_ENDIAN ENDIAN_BIG
-#include "vnc-enc-zrle.inc.c"
+#include "vnc-enc-zrle.c.inc"
 
 #undef ZRLE_COMPACT_PIXEL
 #define ZRLE_COMPACT_PIXEL 24b
 #undef ZYWRLE_ENDIAN
 #define ZYWRLE_ENDIAN ENDIAN_LITTLE
-#include "vnc-enc-zrle.inc.c"
+#include "vnc-enc-zrle.c.inc"
 
 #undef ZYWRLE_ENDIAN
 #define ZYWRLE_ENDIAN ENDIAN_BIG
-#include "vnc-enc-zrle.inc.c"
+#include "vnc-enc-zrle.c.inc"
 #undef ZRLE_COMPACT_PIXEL
 #undef ZRLE_BPP
 

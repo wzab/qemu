@@ -205,7 +205,7 @@ static int dsound_init_out(HWVoiceOut *hw, struct audsettings *as,
         NULL
         );
 #else
-    bd.dwFlags = DSBCAPS_STICKYFOCUS | DSBCAPS_GETCURRENTPOSITION2;
+    bd.dwFlags = DSBCAPS_GLOBALFOCUS | DSBCAPS_GETCURRENTPOSITION2;
     hr = IDirectSound_CreateSoundBuffer (
         s->dsound,
         &bd,
@@ -244,6 +244,7 @@ static int dsound_init_out(HWVoiceOut *hw, struct audsettings *as,
         goto fail0;
     }
 
+    ds->first_time = true;
     obt_as.endianness = 0;
     audio_pcm_init_info (&hw->info, &obt_as);
 

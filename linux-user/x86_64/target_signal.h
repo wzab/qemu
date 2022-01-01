@@ -4,9 +4,9 @@
 /* this struct defines a stack used during syscall handling */
 
 typedef struct target_sigaltstack {
-	abi_ulong ss_sp;
-	abi_long ss_flags;
-	abi_ulong ss_size;
+    abi_ulong ss_sp;
+    abi_int ss_flags;
+    abi_ulong ss_size;
 } target_stack_t;
 
 
@@ -20,5 +20,8 @@ typedef struct target_sigaltstack {
 #define TARGET_SIGSTKSZ		8192
 
 #include "../generic/signal.h"
+
+/* For x86_64, use of SA_RESTORER is mandatory. */
+#define TARGET_ARCH_HAS_SIGTRAMP_PAGE 0
 
 #endif /* X86_64_TARGET_SIGNAL_H */

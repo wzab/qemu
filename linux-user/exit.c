@@ -17,8 +17,10 @@
  *  along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 #include "qemu/osdep.h"
+#include "exec/gdbstub.h"
 #include "qemu.h"
-#ifdef TARGET_GPROF
+#include "user-internals.h"
+#ifdef CONFIG_GPROF
 #include <sys/gmon.h>
 #endif
 
@@ -28,11 +30,12 @@ extern void __gcov_dump(void);
 
 void preexit_cleanup(CPUArchState *env, int code)
 {
-#ifdef TARGET_GPROF
+#ifdef CONFIG_GPROF
         _mcleanup();
 #endif
 #ifdef CONFIG_GCOV
         __gcov_dump();
 #endif
-        gdb_exit(env, code);
+        gdb_exit(code);
+        qemu_plugin_user_exit();
 }

@@ -244,6 +244,18 @@ static void mss_timer_init(Object *obj)
     sysbus_init_mmio(SYS_BUS_DEVICE(obj), &t->mmio);
 }
 
+static void mss_timer_finalize(Object *obj)
+{
+    MSSTimerState *t = MSS_TIMER(obj);
+    int i;
+
+    for (i = 0; i < NUM_TIMERS; i++) {
+        struct Msf2Timer *st = &t->timers[i];
+
+        ptimer_free(st->ptimer);
+    }
+}
+
 static const VMStateDescription vmstate_timers = {
     .name = "mss-timer-block",
     .version_id = 1,
@@ -278,7 +290,7 @@ static void mss_timer_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
 
-    dc->props = mss_timer_properties;
+    device_class_set_props(dc, mss_timer_properties);
     dc->vmsd = &vmstate_mss_timer;
 }
 
@@ -287,6 +299,7 @@ static const TypeInfo mss_timer_info = {
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(MSSTimerState),
     .instance_init = mss_timer_init,
+    .instance_finalize = mss_timer_finalize,
     .class_init    = mss_timer_class_init,
 };
 
