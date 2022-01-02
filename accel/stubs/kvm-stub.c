@@ -11,7 +11,6 @@
  */
 
 #include "qemu/osdep.h"
-#include "cpu.h"
 #include "sysemu/kvm.h"
 
 #ifndef CONFIG_USER_ONLY
@@ -145,6 +144,11 @@ void kvm_init_cpu_signals(CPUState *cpu)
 }
 
 bool kvm_arm_supports_user_irq(void)
+{
+    return false;
+}
+
+bool kvm_dirty_ring_enabled(void)
 {
     return false;
 }

@@ -74,7 +74,8 @@ void pci_host_config_write_common(PCIDevice *pci_dev, uint32_t addr,
     /* non-zero functions are only exposed when function 0 is present,
      * allowing direct removal of unexposed functions.
      */
-    if (pci_dev->qdev.hotplugged && !pci_get_function_0(pci_dev)) {
+    if ((pci_dev->qdev.hotplugged && !pci_get_function_0(pci_dev)) ||
+        !pci_dev->has_power) {
         return;
     }
 
@@ -97,7 +98,8 @@ uint32_t pci_host_config_read_common(PCIDevice *pci_dev, uint32_t addr,
     /* non-zero functions are only exposed when function 0 is present,
      * allowing direct removal of unexposed functions.
      */
-    if (pci_dev->qdev.hotplugged && !pci_get_function_0(pci_dev)) {
+    if ((pci_dev->qdev.hotplugged && !pci_get_function_0(pci_dev)) ||
+        !pci_dev->has_power) {
         return ~0x0;
     }
 
@@ -222,6 +224,7 @@ const VMStateDescription vmstate_pcihost = {
 static Property pci_host_properties_common[] = {
     DEFINE_PROP_BOOL("x-config-reg-migration-enabled", PCIHostState,
                      mig_enabled, true),
+    DEFINE_PROP_BOOL("bypass-iommu", PCIHostState, bypass_iommu, false),
     DEFINE_PROP_END_OF_LIST(),
 };
 

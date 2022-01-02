@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifer: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-2.0-or-later
  *
  * QEMU Vitual M68K Machine
  *
@@ -12,14 +12,11 @@
 #include "qemu-common.h"
 #include "sysemu/sysemu.h"
 #include "cpu.h"
-#include "hw/hw.h"
 #include "hw/boards.h"
-#include "hw/irq.h"
 #include "hw/qdev-properties.h"
 #include "elf.h"
 #include "hw/loader.h"
 #include "ui/console.h"
-#include "exec/address-spaces.h"
 #include "hw/sysbus.h"
 #include "standard-headers/asm-m68k/bootinfo.h"
 #include "standard-headers/asm-m68k/bootinfo-virt.h"
@@ -307,7 +304,21 @@ type_init(virt_machine_register_types)
     } \
     type_init(machvirt_machine_##major##_##minor##_init);
 
-static void virt_machine_6_0_options(MachineClass *mc)
+static void virt_machine_6_2_options(MachineClass *mc)
 {
 }
-DEFINE_VIRT_MACHINE(6, 0, true)
+DEFINE_VIRT_MACHINE(6, 2, true)
+
+static void virt_machine_6_1_options(MachineClass *mc)
+{
+    virt_machine_6_2_options(mc);
+    compat_props_add(mc->compat_props, hw_compat_6_1, hw_compat_6_1_len);
+}
+DEFINE_VIRT_MACHINE(6, 1, false)
+
+static void virt_machine_6_0_options(MachineClass *mc)
+{
+    virt_machine_6_1_options(mc);
+    compat_props_add(mc->compat_props, hw_compat_6_0, hw_compat_6_0_len);
+}
+DEFINE_VIRT_MACHINE(6, 0, false)

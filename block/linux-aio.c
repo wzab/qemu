@@ -28,6 +28,9 @@
  */
 #define MAX_EVENTS 1024
 
+/* Maximum number of requests in a batch. (default value) */
+#define DEFAULT_MAX_BATCH 32
+
 struct qemu_laiocb {
     Coroutine *co;
     LinuxAioState *ctx;
@@ -331,22 +334,41 @@ static void ioq_submit(LinuxAioState *s)
     }
 }
 
+static uint64_t laio_max_batch(LinuxAioState *s, uint64_t dev_max_batch)
+{
+    uint64_t max_batch = s->aio_context->aio_max_batch ?: DEFAULT_MAX_BATCH;
+
+    /*
+     * AIO context can be shared between multiple block devices, so
+     * `dev_max_batch` allows reducing the batch size for latency-sensitive
+     * devices.
+     */
+    max_batch = MIN_NON_ZERO(dev_max_batch, max_batch);
+
+    /* limit the batch with the number of available events */
+    max_batch = MIN_NON_ZERO(MAX_EVENTS - s->io_q.in_flight, max_batch);
+
+    return max_batch;
+}
+
 void laio_io_plug(BlockDriverState *bs, LinuxAioState *s)
 {
     s->io_q.plugged++;
 }
 
-void laio_io_unplug(BlockDriverState *bs, LinuxAioState *s)
+void laio_io_unplug(BlockDriverState *bs, LinuxAioState *s,
+                    uint64_t dev_max_batch)
 {
     assert(s->io_q.plugged);
-    if (--s->io_q.plugged == 0 &&
-        !s->io_q.blocked && !QSIMPLEQ_EMPTY(&s->io_q.pending)) {
+    if (s->io_q.in_queue >= laio_max_batch(s, dev_max_batch) ||
+        (--s->io_q.plugged == 0 &&
+         !s->io_q.blocked && !QSIMPLEQ_EMPTY(&s->io_q.pending))) {
         ioq_submit(s);
     }
 }
 
 static int laio_do_submit(int fd, struct qemu_laiocb *laiocb, off_t offset,
-                          int type)
+                          int type, uint64_t dev_max_batch)
 {
     LinuxAioState *s = laiocb->ctx;
     struct iocb *iocbs = &laiocb->iocb;
@@ -371,7 +393,7 @@ static int laio_do_submit(int fd, struct qemu_laiocb *laiocb, off_t offset,
     s->io_q.in_queue++;
     if (!s->io_q.blocked &&
         (!s->io_q.plugged ||
-         s->io_q.in_flight + s->io_q.in_queue >= MAX_EVENTS)) {
+         s->io_q.in_queue >= laio_max_batch(s, dev_max_batch))) {
         ioq_submit(s);
     }
 
@@ -379,7 +401,8 @@ static int laio_do_submit(int fd, struct qemu_laiocb *laiocb, off_t offset,
 }
 
 int coroutine_fn laio_co_submit(BlockDriverState *bs, LinuxAioState *s, int fd,
-                                uint64_t offset, QEMUIOVector *qiov, int type)
+                                uint64_t offset, QEMUIOVector *qiov, int type,
+                                uint64_t dev_max_batch)
 {
     int ret;
     struct qemu_laiocb laiocb = {
@@ -391,7 +414,7 @@ int coroutine_fn laio_co_submit(BlockDriverState *bs, LinuxAioState *s, int fd,
         .qiov       = qiov,
     };
 
-    ret = laio_do_submit(fd, &laiocb, offset, type);
+    ret = laio_do_submit(fd, &laiocb, offset, type, dev_max_batch);
     if (ret < 0) {
         return ret;
     }

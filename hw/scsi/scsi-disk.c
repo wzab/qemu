@@ -1087,6 +1087,7 @@ static int mode_sense_page(SCSIDiskState *s, int page, uint8_t **p_outbuf,
     uint8_t *p = *p_outbuf + 2;
     int length;
 
+    assert(page < ARRAY_SIZE(mode_sense_valid));
     if ((mode_sense_valid[page] & (1 << s->qdev.type)) == 0) {
         return -1;
     }
@@ -1428,6 +1429,11 @@ static int scsi_disk_check_mode_select(SCSIDiskState *s, int page,
         return -1;
     }
 
+    /* MODE_PAGE_ALLS is only valid for MODE SENSE commands */
+    if (page == MODE_PAGE_ALLS) {
+        return -1;
+    }
+
     p = mode_current;
     memset(mode_current, 0, inlen + 2);
     len = mode_sense_page(s, page, &p, 0);
@@ -1582,6 +1588,7 @@ invalid_field:
     scsi_check_condition(r, SENSE_CODE(INVALID_FIELD));
 }
 
+/* sector_num and nb_sectors expected to be in qdev blocksize */
 static inline bool check_lba_range(SCSIDiskState *s,
                                    uint64_t sector_num, uint32_t nb_sectors)
 {
@@ -1614,11 +1621,12 @@ static void scsi_unmap_complete_noio(UnmapCBData *data, int ret)
     assert(r->req.aiocb == NULL);
 
     if (data->count > 0) {
-        r->sector = ldq_be_p(&data->inbuf[0])
-            * (s->qdev.blocksize / BDRV_SECTOR_SIZE);
-        r->sector_count = (ldl_be_p(&data->inbuf[8]) & 0xffffffffULL)
-            * (s->qdev.blocksize / BDRV_SECTOR_SIZE);
-        if (!check_lba_range(s, r->sector, r->sector_count)) {
+        uint64_t sector_num = ldq_be_p(&data->inbuf[0]);
+        uint32_t nb_sectors = ldl_be_p(&data->inbuf[8]) & 0xffffffffULL;
+        r->sector = sector_num * (s->qdev.blocksize / BDRV_SECTOR_SIZE);
+        r->sector_count = nb_sectors * (s->qdev.blocksize / BDRV_SECTOR_SIZE);
+
+        if (!check_lba_range(s, sector_num, nb_sectors)) {
             block_acct_invalid(blk_get_stats(s->qdev.conf.blk),
                                BLOCK_ACCT_UNMAP);
             scsi_check_condition(r, SENSE_CODE(LBA_OUT_OF_RANGE));

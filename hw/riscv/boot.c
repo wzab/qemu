@@ -35,7 +35,32 @@
 
 bool riscv_is_32bit(RISCVHartArrayState *harts)
 {
-    return riscv_cpu_is_32bit(&harts->harts[0].env);
+    return harts->harts[0].env.misa_mxl_max == MXL_RV32;
+}
+
+/*
+ * Return the per-socket PLIC hart topology configuration string
+ * (caller must free with g_free())
+ */
+char *riscv_plic_hart_config_string(int hart_count)
+{
+    g_autofree const char **vals = g_new(const char *, hart_count + 1);
+    int i;
+
+    for (i = 0; i < hart_count; i++) {
+        CPUState *cs = qemu_get_cpu(i);
+        CPURISCVState *env = &RISCV_CPU(cs)->env;
+
+        if (riscv_has_ext(env, RVS)) {
+            vals[i] = "MS";
+        } else {
+            vals[i] = "M";
+        }
+    }
+    vals[i] = NULL;
+
+    /* g_strjoinv() obliges us to cast away const here */
+    return g_strjoinv(",", (char **)vals);
 }
 
 target_ulong riscv_calc_kernel_start_addr(RISCVHartArrayState *harts,
@@ -182,7 +207,7 @@ uint32_t riscv_load_fdt(hwaddr dram_base, uint64_t mem_size, void *fdt)
 {
     uint32_t temp, fdt_addr;
     hwaddr dram_end = dram_base + mem_size;
-    int fdtsize = fdt_totalsize(fdt);
+    int ret, fdtsize = fdt_totalsize(fdt);
 
     if (fdtsize <= 0) {
         error_report("invalid device-tree");
@@ -198,7 +223,9 @@ uint32_t riscv_load_fdt(hwaddr dram_base, uint64_t mem_size, void *fdt)
     temp = MIN(dram_end, 3072 * MiB);
     fdt_addr = QEMU_ALIGN_DOWN(temp - fdtsize, 16 * MiB);
 
-    fdt_pack(fdt);
+    ret = fdt_pack(fdt);
+    /* Should only fail if we've built a corrupted tree */
+    g_assert(ret == 0);
     /* copy in the device tree */
     qemu_fdt_dumpdtb(fdt, fdtsize);
 

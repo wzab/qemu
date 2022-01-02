@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2016-2020 Red Hat, Inc.
+ *  Copyright (C) 2016-2021 Red Hat, Inc.
  *  Copyright (C) 2005  Anthony Liguori <anthony@codemonkey.ws>
  *
  *  Network Block Device Server Side
@@ -879,7 +879,9 @@ static bool nbd_meta_qemu_query(NBDClient *client, NBDExportMetaContexts *meta,
     if (!*query) {
         if (client->opt == NBD_OPT_LIST_META_CONTEXT) {
             meta->allocation_depth = meta->exp->allocation_depth;
-            memset(meta->bitmaps, 1, meta->exp->nr_export_bitmaps);
+            if (meta->exp->nr_export_bitmaps) {
+                memset(meta->bitmaps, 1, meta->exp->nr_export_bitmaps);
+            }
         }
         trace_nbd_negotiate_meta_query_parse("empty");
         return true;
@@ -894,7 +896,8 @@ static bool nbd_meta_qemu_query(NBDClient *client, NBDExportMetaContexts *meta,
     if (nbd_strshift(&query, "dirty-bitmap:")) {
         trace_nbd_negotiate_meta_query_parse("dirty-bitmap:");
         if (!*query) {
-            if (client->opt == NBD_OPT_LIST_META_CONTEXT) {
+            if (client->opt == NBD_OPT_LIST_META_CONTEXT &&
+                meta->exp->nr_export_bitmaps) {
                 memset(meta->bitmaps, 1, meta->exp->nr_export_bitmaps);
             }
             trace_nbd_negotiate_meta_query_parse("empty");
@@ -973,13 +976,14 @@ static int nbd_negotiate_meta_queries(NBDClient *client,
 {
     int ret;
     g_autofree char *export_name = NULL;
-    g_autofree bool *bitmaps = NULL;
+    /* Mark unused to work around https://bugs.llvm.org/show_bug.cgi?id=3888 */
+    g_autofree G_GNUC_UNUSED bool *bitmaps = NULL;
     NBDExportMetaContexts local_meta = {0};
     uint32_t nb_queries;
     size_t i;
     size_t count = 0;
 
-    if (!client->structured_reply) {
+    if (client->opt == NBD_OPT_SET_META_CONTEXT && !client->structured_reply) {
         return nbd_opt_invalid(client, errp,
                                "request option '%s' when structured reply "
                                "is not negotiated",
@@ -1023,7 +1027,9 @@ static int nbd_negotiate_meta_queries(NBDClient *client,
         /* enable all known contexts */
         meta->base_allocation = true;
         meta->allocation_depth = meta->exp->allocation_depth;
-        memset(meta->bitmaps, 1, meta->exp->nr_export_bitmaps);
+        if (meta->exp->nr_export_bitmaps) {
+            memset(meta->bitmaps, 1, meta->exp->nr_export_bitmaps);
+        }
     } else {
         for (i = 0; i < nb_queries; ++i) {
             ret = nbd_negotiate_meta_query(client, meta, errp);
@@ -1412,6 +1418,9 @@ static int nbd_receive_request(NBDClient *client, NBDRequest *request,
     if (ret < 0) {
         return ret;
     }
+    if (ret == 0) {
+        return -EIO;
+    }
 
     /* Request
        [ 0 ..  3]   magic   (NBD_REQUEST_MAGIC)
@@ -1513,6 +1522,11 @@ static void nbd_request_put(NBDRequestData *req)
     g_free(req);
 
     client->nb_requests--;
+
+    if (client->quiescing && client->nb_requests == 0) {
+        aio_wait_kick();
+    }
+
     nbd_client_receive_next_request(client);
 
     nbd_client_put(client);
@@ -1530,49 +1544,68 @@ static void blk_aio_attached(AioContext *ctx, void *opaque)
     QTAILQ_FOREACH(client, &exp->clients, next) {
         qio_channel_attach_aio_context(client->ioc, ctx);
 
+        assert(client->nb_requests == 0);
         assert(client->recv_coroutine == NULL);
         assert(client->send_coroutine == NULL);
-
-        if (client->quiescing) {
-            client->quiescing = false;
-            nbd_client_receive_next_request(client);
-        }
-    }
-}
-
-static void nbd_aio_detach_bh(void *opaque)
-{
-    NBDExport *exp = opaque;
-    NBDClient *client;
-
-    QTAILQ_FOREACH(client, &exp->clients, next) {
-        qio_channel_detach_aio_context(client->ioc);
-        client->quiescing = true;
-
-        if (client->recv_coroutine) {
-            if (client->read_yielding) {
-                qemu_aio_coroutine_enter(exp->common.ctx,
-                                         client->recv_coroutine);
-            } else {
-                AIO_WAIT_WHILE(exp->common.ctx, client->recv_coroutine != NULL);
-            }
-        }
-
-        if (client->send_coroutine) {
-            AIO_WAIT_WHILE(exp->common.ctx, client->send_coroutine != NULL);
-        }
     }
 }
 
 static void blk_aio_detach(void *opaque)
 {
     NBDExport *exp = opaque;
+    NBDClient *client;
 
     trace_nbd_blk_aio_detach(exp->name, exp->common.ctx);
 
-    aio_wait_bh_oneshot(exp->common.ctx, nbd_aio_detach_bh, exp);
+    QTAILQ_FOREACH(client, &exp->clients, next) {
+        qio_channel_detach_aio_context(client->ioc);
+    }
 
     exp->common.ctx = NULL;
+}
+
+static void nbd_drained_begin(void *opaque)
+{
+    NBDExport *exp = opaque;
+    NBDClient *client;
+
+    QTAILQ_FOREACH(client, &exp->clients, next) {
+        client->quiescing = true;
+    }
+}
+
+static void nbd_drained_end(void *opaque)
+{
+    NBDExport *exp = opaque;
+    NBDClient *client;
+
+    QTAILQ_FOREACH(client, &exp->clients, next) {
+        client->quiescing = false;
+        nbd_client_receive_next_request(client);
+    }
+}
+
+static bool nbd_drained_poll(void *opaque)
+{
+    NBDExport *exp = opaque;
+    NBDClient *client;
+
+    QTAILQ_FOREACH(client, &exp->clients, next) {
+        if (client->nb_requests != 0) {
+            /*
+             * If there's a coroutine waiting for a request on nbd_read_eof()
+             * enter it here so we don't depend on the client to wake it up.
+             */
+            if (client->recv_coroutine != NULL && client->read_yielding) {
+                qemu_aio_coroutine_enter(exp->common.ctx,
+                                         client->recv_coroutine);
+            }
+
+            return true;
+        }
+    }
+
+    return false;
 }
 
 static void nbd_eject_notifier(Notifier *n, void *data)
@@ -1593,6 +1626,12 @@ void nbd_export_set_on_eject_blk(BlockExport *exp, BlockBackend *blk)
     nbd_exp->eject_notifier.notify = nbd_eject_notifier;
     blk_add_remove_bs_notifier(blk, &nbd_exp->eject_notifier);
 }
+
+static const BlockDevOps nbd_block_ops = {
+    .drained_begin = nbd_drained_begin,
+    .drained_end = nbd_drained_end,
+    .drained_poll = nbd_drained_poll,
+};
 
 static int nbd_export_create(BlockExport *blk_exp, BlockExportOptions *exp_args,
                              Error **errp)
@@ -1715,7 +1754,16 @@ static int nbd_export_create(BlockExport *blk_exp, BlockExportOptions *exp_args,
 
     exp->allocation_depth = arg->allocation_depth;
 
+    /*
+     * We need to inhibit request queuing in the block layer to ensure we can
+     * be properly quiesced when entering a drained section, as our coroutines
+     * servicing pending requests might enter blk_pread().
+     */
+    blk_set_disable_request_queuing(blk, true);
+
     blk_add_aio_context_notifier(blk, blk_aio_attached, blk_aio_detach, exp);
+
+    blk_set_dev_ops(blk, &nbd_block_ops, exp);
 
     QTAILQ_INSERT_TAIL(&exports, exp, next);
 
@@ -1788,6 +1836,7 @@ static void nbd_export_delete(BlockExport *blk_exp)
         }
         blk_remove_aio_context_notifier(exp->common.blk, blk_aio_attached,
                                         blk_aio_detach, exp);
+        blk_set_disable_request_queuing(exp->common.blk, false);
     }
 
     for (i = 0; i < exp->nr_export_bitmaps; i++) {
@@ -2460,16 +2509,8 @@ static coroutine_fn int nbd_handle_request(NBDClient *client,
         if (request->flags & NBD_CMD_FLAG_FAST_ZERO) {
             flags |= BDRV_REQ_NO_FALLBACK;
         }
-        ret = 0;
-        /* FIXME simplify this when blk_pwrite_zeroes switches to 64-bit */
-        while (ret >= 0 && request->len) {
-            int align = client->check_align ?: 1;
-            int len = MIN(request->len, QEMU_ALIGN_DOWN(BDRV_REQUEST_MAX_BYTES,
-                                                        align));
-            ret = blk_pwrite_zeroes(exp->common.blk, request->from, len, flags);
-            request->len -= len;
-            request->from += len;
-        }
+        ret = blk_pwrite_zeroes(exp->common.blk, request->from, request->len,
+                                flags);
         return nbd_send_generic_reply(client, request->handle, ret,
                                       "writing to file failed", errp);
 
@@ -2483,16 +2524,7 @@ static coroutine_fn int nbd_handle_request(NBDClient *client,
                                       "flush failed", errp);
 
     case NBD_CMD_TRIM:
-        ret = 0;
-        /* FIXME simplify this when blk_co_pdiscard switches to 64-bit */
-        while (ret >= 0 && request->len) {
-            int align = client->check_align ?: 1;
-            int len = MIN(request->len, QEMU_ALIGN_DOWN(BDRV_REQUEST_MAX_BYTES,
-                                                        align));
-            ret = blk_co_pdiscard(exp->common.blk, request->from, len);
-            request->len -= len;
-            request->from += len;
-        }
+        ret = blk_co_pdiscard(exp->common.blk, request->from, request->len);
         if (ret >= 0 && request->flags & NBD_CMD_FLAG_FUA) {
             ret = blk_co_flush(exp->common.blk);
         }
