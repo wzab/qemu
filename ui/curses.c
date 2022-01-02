@@ -299,11 +299,7 @@ static void curses_refresh(DisplayChangeListener *dcl)
 
         /* alt or esc key */
         if (keycode == 1) {
-<<<<<<< HEAD
-            enum maybe_keycode next_maybe_keycode = 0;
-=======
             enum maybe_keycode next_maybe_keycode = CURSES_KEYCODE;
->>>>>>> v6.0.0
             int nextchr = console_getch(&next_maybe_keycode);
 
             if (nextchr != -1) {
