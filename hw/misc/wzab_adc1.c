@@ -71,9 +71,12 @@
 #include "qemu/osdep.h"
 #include <inttypes.h>
 #include "qemu/compiler.h"
+#include "migration/vmstate.h"
+#include "sysemu/reset.h"
 #include <string.h>
 #include "hw/sysbus.h"
 #include "hw/hw.h"
+#include "hw/irq.h"
 #include "hw/pci/pci.h"
 #include "qemu/timer.h"
 #include "wzab_adc1.h"

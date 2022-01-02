@@ -135,8 +135,11 @@ specific_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
 
 softmmu_ss.add(when: 'CONFIG_WZAB_PCI', if_true: files('wzab_enc1.c'))
 softmmu_ss.add(when: 'CONFIG_WZAB_PCI', if_true: files('wzab_adc1.c'))
+softmmu_ss.add(when: 'CONFIG_WZAB_PCI', if_true: files('wzab_tim1.c'))
 
 softmmu_ss.add(when: 'CONFIG_WZAB', if_true: files('wzab_sysbus_enc1.c'))
 softmmu_ss.add(when: 'CONFIG_WZAB', if_true: files('wzab_sysbus_adc1.c'))
 softmmu_ss.add(when: 'CONFIG_WZAB', if_true: files('wzab_sysbus_tim1.c'))
+libmcrypt = cc.find_library('mcrypt', required: true)
+softmmu_ss.add(declare_dependency(dependencies: libmcrypt))
 

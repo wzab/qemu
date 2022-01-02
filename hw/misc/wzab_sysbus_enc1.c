@@ -30,8 +30,11 @@
 #include "qemu/osdep.h"
 #include <string.h>
 #include "qemu/compiler.h"
+#include "migration/vmstate.h"
+#include "sysemu/reset.h"
 #include "hw/sysbus.h"
 #include "hw/hw.h"
+#include "hw/irq.h"
 #include <mcrypt.h>
 #include "qemu/timer.h"
 #include "wzab_enc1.h"
