@@ -29,23 +29,9 @@
 
 #include "config-host.h"
 #ifdef NEED_CPU_H
-#include "config-target.h"
+#include CONFIG_TARGET
 #else
 #include "exec/poison.h"
-#endif
-#ifdef __COVERITY__
-/* Coverity does not like the new _Float* types that are used by
- * recent glibc, and croaks on every single file that includes
- * stdlib.h.  These typedefs are enough to please it.
- *
- * Note that these fix parse errors so they cannot be placed in
- * scripts/coverity-model.c.
- */
-typedef float _Float32;
-typedef double _Float32x;
-typedef double _Float64;
-typedef __float80 _Float64x;
-typedef __float128 _Float128;
 #endif
 
 #include "qemu/compiler.h"
@@ -71,7 +57,7 @@ typedef __float128 _Float128;
 #define daemon qemu_fake_daemon_function
 #include <stdlib.h>
 #undef daemon
-extern int daemon(int, int);
+QEMU_EXTERN_C int daemon(int, int);
 #endif
 
 #ifdef _WIN32
@@ -118,8 +104,13 @@ extern int daemon(int, int);
 #include <setjmp.h>
 #include <signal.h>
 
-#ifdef __OpenBSD__
-#include <sys/signal.h>
+#ifdef CONFIG_IOVEC
+#include <sys/uio.h>
+#endif
+
+#if defined(__linux__) && defined(__sparc__)
+/* The SPARC definition of QEMU_VMALLOC_ALIGN needs SHMLBA */
+#include <sys/shm.h>
 #endif
 
 #ifndef _WIN32
@@ -127,6 +118,21 @@ extern int daemon(int, int);
 #else
 #define WIFEXITED(x)   1
 #define WEXITSTATUS(x) (x)
+#endif
+
+#ifdef __APPLE__
+#include <AvailabilityMacros.h>
+#endif
+
+/*
+ * This is somewhat like a system header; it must be outside any extern "C"
+ * block because it includes system headers itself, including glib.h,
+ * which will not compile if inside an extern "C" block.
+ */
+#include "glib-compat.h"
+
+#ifdef __cplusplus
+extern "C" {
 #endif
 
 #ifdef _WIN32
@@ -137,7 +143,6 @@ extern int daemon(int, int);
 #include "sysemu/os-posix.h"
 #endif
 
-#include "glib-compat.h"
 #include "qemu/typedefs.h"
 
 /*
@@ -186,6 +191,9 @@ extern int daemon(int, int);
 #endif
 #ifndef MAP_ANONYMOUS
 #define MAP_ANONYMOUS MAP_ANON
+#endif
+#ifndef MAP_FIXED_NOREPLACE
+#define MAP_FIXED_NOREPLACE 0
 #endif
 #ifndef ENOMEDIUM
 #define ENOMEDIUM ENODEV
@@ -250,18 +258,62 @@ extern int daemon(int, int);
 #define SIZE_MAX ((size_t)-1)
 #endif
 
-#ifndef MIN
-#define MIN(a, b) (((a) < (b)) ? (a) : (b))
-#endif
-#ifndef MAX
-#define MAX(a, b) (((a) > (b)) ? (a) : (b))
+/*
+ * Two variations of MIN/MAX macros. The first is for runtime use, and
+ * evaluates arguments only once (so it is safe even with side
+ * effects), but will not work in constant contexts (such as array
+ * size declarations) because of the '{}'.  The second is for constant
+ * expression use, where evaluating arguments twice is safe because
+ * the result is going to be constant anyway, but will not work in a
+ * runtime context because of a void expression where a value is
+ * expected.  Thus, both gcc and clang will fail to compile if you use
+ * the wrong macro (even if the error may seem a bit cryptic).
+ *
+ * Note that neither form is usable as an #if condition; if you truly
+ * need to write conditional code that depends on a minimum or maximum
+ * determined by the pre-processor instead of the compiler, you'll
+ * have to open-code it.  Sadly, Coverity is severely confused by the
+ * constant variants, so we have to dumb things down there.
+ */
+#undef MIN
+#define MIN(a, b)                                       \
+    ({                                                  \
+        typeof(1 ? (a) : (b)) _a = (a), _b = (b);       \
+        _a < _b ? _a : _b;                              \
+    })
+#undef MAX
+#define MAX(a, b)                                       \
+    ({                                                  \
+        typeof(1 ? (a) : (b)) _a = (a), _b = (b);       \
+        _a > _b ? _a : _b;                              \
+    })
+
+#ifdef __COVERITY__
+# define MIN_CONST(a, b) ((a) < (b) ? (a) : (b))
+# define MAX_CONST(a, b) ((a) > (b) ? (a) : (b))
+#else
+# define MIN_CONST(a, b)                                        \
+    __builtin_choose_expr(                                      \
+        __builtin_constant_p(a) && __builtin_constant_p(b),     \
+        (a) < (b) ? (a) : (b),                                  \
+        ((void)0))
+# define MAX_CONST(a, b)                                        \
+    __builtin_choose_expr(                                      \
+        __builtin_constant_p(a) && __builtin_constant_p(b),     \
+        (a) > (b) ? (a) : (b),                                  \
+        ((void)0))
 #endif
 
-/* Minimum function that returns zero only iff both values are zero.
- * Intended for use with unsigned values only. */
+/*
+ * Minimum function that returns zero only if both values are zero.
+ * Intended for use with unsigned values only.
+ */
 #ifndef MIN_NON_ZERO
-#define MIN_NON_ZERO(a, b) ((a) == 0 ? (b) : \
-                                ((b) == 0 ? (a) : (MIN(a, b))))
+#define MIN_NON_ZERO(a, b)                              \
+    ({                                                  \
+        typeof(1 ? (a) : (b)) _a = (a), _b = (b);       \
+        _a == 0 ? _b : (_b == 0 || _b > _a) ? _a : _b;  \
+    })
 #endif
 
 /* Round number down to multiple */
@@ -393,13 +445,17 @@ void qemu_anon_ram_free(void *ptr, size_t size);
 #define HAVE_CHARDEV_SERIAL 1
 #elif defined(__linux__) || defined(__sun__) || defined(__FreeBSD__)    \
     || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__) \
-    || defined(__GLIBC__)
+    || defined(__GLIBC__) || defined(__APPLE__)
 #define HAVE_CHARDEV_SERIAL 1
 #endif
 
 #if defined(__linux__) || defined(__FreeBSD__) ||               \
     defined(__FreeBSD_kernel__) || defined(__DragonFly__)
 #define HAVE_CHARDEV_PARPORT 1
+#endif
+
+#if defined(__HAIKU__)
+#define SIGIO SIGPOLL
 #endif
 
 #if defined(CONFIG_LINUX)
@@ -422,10 +478,9 @@ void qemu_anon_ram_free(void *ptr, size_t size);
    /* Use 1 MiB (segment size) alignment so gmap can be used by KVM. */
 #  define QEMU_VMALLOC_ALIGN (256 * 4096)
 #elif defined(__linux__) && defined(__sparc__)
-#include <sys/shm.h>
-#  define QEMU_VMALLOC_ALIGN MAX(getpagesize(), SHMLBA)
+#  define QEMU_VMALLOC_ALIGN MAX(qemu_real_host_page_size, SHMLBA)
 #else
-#  define QEMU_VMALLOC_ALIGN getpagesize()
+#  define QEMU_VMALLOC_ALIGN qemu_real_host_page_size
 #endif
 
 #ifdef CONFIG_POSIX
@@ -460,15 +515,23 @@ int qemu_madvise(void *addr, size_t len, int advice);
 int qemu_mprotect_rwx(void *addr, size_t size);
 int qemu_mprotect_none(void *addr, size_t size);
 
-int qemu_open(const char *name, int flags, ...);
+/*
+ * Don't introduce new usage of this function, prefer the following
+ * qemu_open/qemu_create that take an "Error **errp"
+ */
+int qemu_open_old(const char *name, int flags, ...);
+int qemu_open(const char *name, int flags, Error **errp);
+int qemu_create(const char *name, int flags, mode_t mode, Error **errp);
 int qemu_close(int fd);
+int qemu_unlink(const char *name);
 #ifndef _WIN32
+int qemu_dup_flags(int fd, int flags);
 int qemu_dup(int fd);
-#endif
 int qemu_lock_fd(int fd, int64_t start, int64_t len, bool exclusive);
 int qemu_unlock_fd(int fd, int64_t start, int64_t len);
 int qemu_lock_fd_test(int fd, int64_t start, int64_t len, bool exclusive);
 bool qemu_has_ofd_lock(void);
+#endif
 
 #if defined(__HAIKU__) && defined(__i386__)
 #define FMT_pid "%ld"
@@ -494,8 +557,6 @@ struct iovec {
 
 ssize_t readv(int fd, const struct iovec *iov, int iov_cnt);
 ssize_t writev(int fd, const struct iovec *iov, int iov_cnt);
-#else
-#include <sys/uio.h>
 #endif
 
 #ifdef _WIN32
@@ -552,9 +613,8 @@ char *qemu_get_local_state_pathname(const char *relative_pathname);
  * Try OS specific API first, if not working, parse from argv0. */
 void qemu_init_exec_dir(const char *argv0);
 
-/* Get the saved exec dir.
- * Caller needs to release the returned string by g_free() */
-char *qemu_get_exec_dir(void);
+/* Get the saved exec dir.  */
+const char *qemu_get_exec_dir(void);
 
 /**
  * qemu_getauxval:
@@ -569,19 +629,6 @@ void qemu_set_tty_echo(int fd, bool echo);
 
 void os_mem_prealloc(int fd, char *area, size_t sz, int smp_cpus,
                      Error **errp);
-
-/**
- * qemu_get_pmem_size:
- * @filename: path to a pmem file
- * @errp: pointer to a NULL-initialized error object
- *
- * Determine the size of a persistent memory file.  Besides supporting files on
- * DAX file systems, this function also supports Linux devdax character
- * devices.
- *
- * Returns: the size or 0 on failure
- */
-uint64_t qemu_get_pmem_size(const char *filename, Error **errp);
 
 /**
  * qemu_get_pid_name:
@@ -632,5 +679,67 @@ static inline void qemu_reset_optind(void)
     optind = 0;
 #endif
 }
+
+/**
+ * qemu_get_host_name:
+ * @errp: Error object
+ *
+ * Operating system agnostic way of querying host name.
+ *
+ * Returns allocated hostname (caller should free), NULL on failure.
+ */
+char *qemu_get_host_name(Error **errp);
+
+/**
+ * qemu_get_host_physmem:
+ *
+ * Operating system agnostic way of querying host memory.
+ *
+ * Returns amount of physical memory on the system. This is purely
+ * advisery and may return 0 if we can't work it out. At the other
+ * end we saturate to SIZE_MAX if you are lucky enough to have that
+ * much memory.
+ */
+size_t qemu_get_host_physmem(void);
+
+/*
+ * Toggle write/execute on the pages marked MAP_JIT
+ * for the current thread.
+ */
+#if defined(MAC_OS_VERSION_11_0) && \
+    MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_VERSION_11_0
+static inline void qemu_thread_jit_execute(void)
+{
+    if (__builtin_available(macOS 11.0, *)) {
+        pthread_jit_write_protect_np(true);
+    }
+}
+
+static inline void qemu_thread_jit_write(void)
+{
+    if (__builtin_available(macOS 11.0, *)) {
+        pthread_jit_write_protect_np(false);
+    }
+}
+#else
+static inline void qemu_thread_jit_write(void) {}
+static inline void qemu_thread_jit_execute(void) {}
+#endif
+
+/**
+ * Platforms which do not support system() return ENOSYS
+ */
+#ifndef HAVE_SYSTEM_FUNCTION
+#define system platform_does_not_support_system
+static inline int platform_does_not_support_system(const char *command)
+{
+    errno = ENOSYS;
+    return -1;
+}
+#endif /* !HAVE_SYSTEM_FUNCTION */
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

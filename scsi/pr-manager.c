@@ -39,7 +39,6 @@ static int pr_manager_worker(void *opaque)
     int fd = data->fd;
     int r;
 
-    g_free(data);
     trace_pr_manager_run(fd, hdr->cmdp[0], hdr->cmdp[1]);
 
     /* The reference was taken in pr_manager_execute.  */
@@ -117,8 +116,7 @@ pr_manager_register_types(void)
 
 static int query_one_pr_manager(Object *object, void *opaque)
 {
-    PRManagerInfoList ***prev = opaque;
-    PRManagerInfoList *elem;
+    PRManagerInfoList ***tail = opaque;
     PRManagerInfo *info;
     PRManager *pr_mgr;
 
@@ -127,15 +125,10 @@ static int query_one_pr_manager(Object *object, void *opaque)
         return 0;
     }
 
-    elem = g_new0(PRManagerInfoList, 1);
     info = g_new0(PRManagerInfo, 1);
-    info->id = object_get_canonical_path_component(object);
+    info->id = g_strdup(object_get_canonical_path_component(object));
     info->connected = pr_manager_is_connected(pr_mgr);
-    elem->value = info;
-    elem->next = NULL;
-
-    **prev = elem;
-    *prev = &elem->next;
+    QAPI_LIST_APPEND(*tail, info);
     return 0;
 }
 

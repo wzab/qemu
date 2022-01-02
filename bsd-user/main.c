@@ -20,6 +20,7 @@
 #include "qemu/osdep.h"
 #include "qemu-common.h"
 #include "qemu/units.h"
+#include "qemu/accel.h"
 #include "sysemu/tcg.h"
 #include "qemu-version.h"
 #include <machine/trap.h>
@@ -33,7 +34,7 @@
 #include "qemu/module.h"
 #include "cpu.h"
 #include "exec/exec-all.h"
-#include "tcg.h"
+#include "tcg/tcg.h"
 #include "qemu/timer.h"
 #include "qemu/envlist.h"
 #include "exec/log.h"
@@ -41,8 +42,8 @@
 
 int singlestep;
 unsigned long mmap_min_addr;
-unsigned long guest_base;
-int have_guest_base;
+uintptr_t guest_base;
+bool have_guest_base;
 unsigned long reserved_va;
 
 static const char *interp_prefix = CONFIG_QEMU_INTERP_PREFIX;
@@ -413,7 +414,11 @@ static void save_window(CPUSPARCState *env)
     save_window_offset(env, cpu_cwp_dec(env, env->cwp - 2));
     env->wim = new_wim;
 #else
-    save_window_offset(env, cpu_cwp_dec(env, env->cwp - 2));
+    /*
+     * cansave is zero if the spill trap handler is triggered by `save` and
+     * nonzero if triggered by a `flushw`
+     */
+    save_window_offset(env, cpu_cwp_dec(env, env->cwp - env->cansave - 2));
     env->cansave++;
     env->canrestore--;
 #endif
@@ -508,6 +513,7 @@ void cpu_loop(CPUSPARCState *env)
         case 0x141:
             if (bsd_type != target_freebsd)
                 goto badtrap;
+            /* fallthrough */
         case 0x100:
 #endif
             syscall_nr = env->gregs[1];
@@ -738,10 +744,9 @@ int main(int argc, char **argv)
     CPUState *cpu;
     int optind;
     const char *r;
-    int gdbstub_port = 0;
+    const char *gdbstub = NULL;
     char **target_environ, **wrk;
     envlist_t *envlist = NULL;
-    char *trace_file = NULL;
     bsd_type = target_openbsd;
 
     if (argc <= 1)
@@ -814,7 +819,7 @@ int main(int argc, char **argv)
                 exit(1);
             }
         } else if (!strcmp(r, "g")) {
-            gdbstub_port = atoi(argv[optind++]);
+            gdbstub = g_strdup(argv[optind++]);
         } else if (!strcmp(r, "r")) {
             qemu_uname_release = argv[optind++];
         } else if (!strcmp(r, "cpu")) {
@@ -828,7 +833,7 @@ int main(int argc, char **argv)
             }
         } else if (!strcmp(r, "B")) {
            guest_base = strtol(argv[optind++], NULL, 0);
-           have_guest_base = 1;
+           have_guest_base = true;
         } else if (!strcmp(r, "drop-ld-preload")) {
             (void) envlist_unsetenv(envlist, "LD_PRELOAD");
         } else if (!strcmp(r, "bsd")) {
@@ -847,8 +852,7 @@ int main(int argc, char **argv)
         } else if (!strcmp(r, "strace")) {
             do_strace = 1;
         } else if (!strcmp(r, "trace")) {
-            g_free(trace_file);
-            trace_file = trace_opt_parse(optarg);
+            trace_opt_parse(optarg);
         } else {
             usage();
         }
@@ -876,7 +880,7 @@ int main(int argc, char **argv)
     if (!trace_init_backends()) {
         exit(1);
     }
-    trace_init_file(trace_file);
+    trace_init_file();
 
     /* Zero out regs */
     memset(regs, 0, sizeof(struct target_pt_regs));
@@ -905,10 +909,14 @@ int main(int argc, char **argv)
 #endif
     }
 
-    /* init tcg before creating CPUs and to get qemu_host_page_size */
-    tcg_exec_init(0);
-
     cpu_type = parse_cpu_option(cpu_model);
+    /* init tcg before creating CPUs and to get qemu_host_page_size */
+    {
+        AccelClass *ac = ACCEL_GET_CLASS(current_accel());
+
+        ac->init_machine(NULL);
+        accel_init_interfaces(ac);
+    }
     cpu = cpu_create(cpu_type);
     env = cpu->env_ptr;
 #if defined(TARGET_SPARC) || defined(TARGET_PPC)
@@ -962,8 +970,8 @@ int main(int argc, char **argv)
     g_free(target_environ);
 
     if (qemu_loglevel_mask(CPU_LOG_PAGE)) {
-        qemu_log("guest_base  0x%lx\n", guest_base);
-        log_page_dump();
+        qemu_log("guest_base  %p\n", (void *)guest_base);
+        log_page_dump("binary load");
 
         qemu_log("start_brk   0x" TARGET_ABI_FMT_lx "\n", info->start_brk);
         qemu_log("end_code    0x" TARGET_ABI_FMT_lx "\n", info->end_code);
@@ -1047,7 +1055,7 @@ int main(int argc, char **argv)
     env->idt.base = target_mmap(0, sizeof(uint64_t) * (env->idt.limit + 1),
                                 PROT_READ|PROT_WRITE,
                                 MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
-    idt_table = g2h(env->idt.base);
+    idt_table = g2h_untagged(env->idt.base);
     set_idt(0, 0);
     set_idt(1, 0);
     set_idt(2, 0);
@@ -1077,7 +1085,7 @@ int main(int argc, char **argv)
                                     PROT_READ|PROT_WRITE,
                                     MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
         env->gdt.limit = sizeof(uint64_t) * TARGET_GDT_ENTRIES - 1;
-        gdt_table = g2h(env->gdt.base);
+        gdt_table = g2h_untagged(env->gdt.base);
 #ifdef TARGET_ABI32
         write_dt(&gdt_table[__USER_CS >> 3], 0, 0xfffff,
                  DESC_G_MASK | DESC_B_MASK | DESC_P_MASK | DESC_S_MASK |
@@ -1124,8 +1132,8 @@ int main(int argc, char **argv)
 #error unsupported target CPU
 #endif
 
-    if (gdbstub_port) {
-        gdbserver_start (gdbstub_port);
+    if (gdbstub) {
+        gdbserver_start(gdbstub);
         gdb_handlesig(cpu, 0);
     }
     cpu_loop(env);

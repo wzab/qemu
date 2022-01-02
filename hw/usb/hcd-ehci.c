@@ -28,10 +28,14 @@
 
 #include "qemu/osdep.h"
 #include "qapi/error.h"
+#include "hw/irq.h"
 #include "hw/usb/ehci-regs.h"
 #include "hw/usb/hcd-ehci.h"
+#include "migration/vmstate.h"
 #include "trace.h"
 #include "qemu/error-report.h"
+#include "qemu/main-loop.h"
+#include "sysemu/runstate.h"
 
 #define FRAME_TIMER_FREQ 1000
 #define FRAME_TIMER_NS   (NANOSECONDS_PER_SECOND / FRAME_TIMER_FREQ)
@@ -348,7 +352,6 @@ static void ehci_trace_sitd(EHCIState *s, hwaddr addr,
 static void ehci_trace_guest_bug(EHCIState *s, const char *message)
 {
     trace_usb_ehci_guest_bug(message);
-    warn_report("%s", message);
 }
 
 static inline bool ehci_enabled(EHCIState *s)
@@ -1189,7 +1192,7 @@ static int ehci_init_transfer(EHCIPacket *p)
 
     while (bytes > 0) {
         if (cpage > 4) {
-            fprintf(stderr, "cpage out of range (%d)\n", cpage);
+            fprintf(stderr, "cpage out of range (%u)\n", cpage);
             qemu_sglist_destroy(&p->sgl);
             return -1;
         }
@@ -1297,7 +1300,6 @@ static void ehci_execute_complete(EHCIQueue *q)
         /* should not be triggerable */
         fprintf(stderr, "USB invalid response %d\n", p->packet.status);
         g_assert_not_reached();
-        break;
     }
 
     /* TODO check 4.12 for splits */
@@ -1370,7 +1372,10 @@ static int ehci_execute(EHCIPacket *p, const char *action)
         spd = (p->pid == USB_TOKEN_IN && NLPTR_TBIT(p->qtd.altnext) == 0);
         usb_packet_setup(&p->packet, p->pid, ep, 0, p->qtdaddr, spd,
                          (p->qtd.token & QTD_TOKEN_IOC) != 0);
-        usb_packet_map(&p->packet, &p->sgl);
+        if (usb_packet_map(&p->packet, &p->sgl)) {
+            qemu_sglist_destroy(&p->sgl);
+            return -1;
+        }
         p->async = EHCI_ASYNC_INITIALIZED;
     }
 
@@ -1442,20 +1447,25 @@ static int ehci_process_itd(EHCIState *ehci,
             dev = ehci_find_device(ehci, devaddr);
             if (dev == NULL) {
                 ehci_trace_guest_bug(ehci, "no device found");
-                return -1;
-            }
-            pid = dir ? USB_TOKEN_IN : USB_TOKEN_OUT;
-            ep = usb_ep_get(dev, pid, endp);
-            if (ep && ep->type == USB_ENDPOINT_XFER_ISOC) {
-                usb_packet_setup(&ehci->ipacket, pid, ep, 0, addr, false,
-                                 (itd->transact[i] & ITD_XACT_IOC) != 0);
-                usb_packet_map(&ehci->ipacket, &ehci->isgl);
-                usb_handle_packet(dev, &ehci->ipacket);
-                usb_packet_unmap(&ehci->ipacket, &ehci->isgl);
-            } else {
-                DPRINTF("ISOCH: attempt to addess non-iso endpoint\n");
-                ehci->ipacket.status = USB_RET_NAK;
+                ehci->ipacket.status = USB_RET_NODEV;
                 ehci->ipacket.actual_length = 0;
+            } else {
+                pid = dir ? USB_TOKEN_IN : USB_TOKEN_OUT;
+                ep = usb_ep_get(dev, pid, endp);
+                if (ep && ep->type == USB_ENDPOINT_XFER_ISOC) {
+                    usb_packet_setup(&ehci->ipacket, pid, ep, 0, addr, false,
+                                     (itd->transact[i] & ITD_XACT_IOC) != 0);
+                    if (usb_packet_map(&ehci->ipacket, &ehci->isgl)) {
+                        qemu_sglist_destroy(&ehci->isgl);
+                        return -1;
+                    }
+                    usb_handle_packet(dev, &ehci->ipacket);
+                    usb_packet_unmap(&ehci->ipacket, &ehci->isgl);
+                } else {
+                    DPRINTF("ISOCH: attempt to addess non-iso endpoint\n");
+                    ehci->ipacket.status = USB_RET_NAK;
+                    ehci->ipacket.actual_length = 0;
+                }
             }
             qemu_sglist_destroy(&ehci->isgl);
 
@@ -1588,7 +1598,7 @@ static int ehci_state_fetchentry(EHCIState *ehci, int async)
 
     default:
         /* TODO: handle FSTN type */
-        fprintf(stderr, "FETCHENTRY: entry at %X is of type %d "
+        fprintf(stderr, "FETCHENTRY: entry at %X is of type %u "
                 "which is not supported yet\n", entry, NLPTR_TYPE_GET(entry));
         return -1;
     }
@@ -1834,6 +1844,9 @@ static int ehci_state_fetchqtd(EHCIQueue *q)
             ehci_set_state(q->ehci, q->async, EST_EXECUTING);
             break;
         }
+    } else if (q->dev == NULL) {
+        ehci_trace_guest_bug(q->ehci, "no device attached to queue");
+        ehci_set_state(q->ehci, q->async, EST_HORIZONTALQH);
     } else {
         p = ehci_alloc_packet(q);
         p->qtdaddr = q->qtdaddr;
@@ -2098,9 +2111,7 @@ static void ehci_advance_state(EHCIState *ehci, int async)
 
         default:
             fprintf(stderr, "Bad state!\n");
-            again = -1;
             g_assert_not_reached();
-            break;
         }
 
         if (again < 0 || itd_count > 16) {
@@ -2425,7 +2436,7 @@ static int usb_ehci_post_load(void *opaque, int version_id)
     return 0;
 }
 
-static void usb_ehci_vm_state_change(void *opaque, int running, RunState state)
+static void usb_ehci_vm_state_change(void *opaque, bool running, RunState state)
 {
     EHCIState *ehci = opaque;
 
@@ -2503,6 +2514,11 @@ void usb_ehci_realize(EHCIState *s, DeviceState *dev, Error **errp)
         return;
     }
 
+    memory_region_add_subregion(&s->mem, s->capsbase, &s->mem_caps);
+    memory_region_add_subregion(&s->mem, s->opregbase, &s->mem_opreg);
+    memory_region_add_subregion(&s->mem, s->opregbase + s->portscbase,
+                                &s->mem_ports);
+
     usb_bus_new(&s->bus, sizeof(s->bus), s->companion_enable ?
                 &ehci_bus_ops_companion : &ehci_bus_ops_standalone, dev);
     for (i = 0; i < s->portnr; i++) {
@@ -2518,12 +2534,11 @@ void usb_ehci_realize(EHCIState *s, DeviceState *dev, Error **errp)
     s->vmstate = qemu_add_vm_change_state_handler(usb_ehci_vm_state_change, s);
 }
 
-void usb_ehci_unrealize(EHCIState *s, DeviceState *dev, Error **errp)
+void usb_ehci_unrealize(EHCIState *s, DeviceState *dev)
 {
     trace_usb_ehci_unrealize();
 
     if (s->frame_timer) {
-        timer_del(s->frame_timer);
         timer_free(s->frame_timer);
         s->frame_timer = NULL;
     }
@@ -2571,11 +2586,6 @@ void usb_ehci_init(EHCIState *s, DeviceState *dev)
                           "operational", s->portscbase);
     memory_region_init_io(&s->mem_ports, OBJECT(dev), &ehci_mmio_port_ops, s,
                           "ports", 4 * s->portnr);
-
-    memory_region_add_subregion(&s->mem, s->capsbase, &s->mem_caps);
-    memory_region_add_subregion(&s->mem, s->opregbase, &s->mem_opreg);
-    memory_region_add_subregion(&s->mem, s->opregbase + s->portscbase,
-                                &s->mem_ports);
 }
 
 void usb_ehci_finalize(EHCIState *s)

@@ -41,6 +41,7 @@ cp_portable() {
                                      -e 'pvrdma_verbs' \
                                      -e 'drm.h' \
                                      -e 'limits' \
+                                     -e 'linux/const' \
                                      -e 'linux/kernel' \
                                      -e 'linux/sysinfo' \
                                      -e 'asm-generic/kvm_para' \
@@ -141,7 +142,7 @@ done
 
 rm -rf "$output/linux-headers/linux"
 mkdir -p "$output/linux-headers/linux"
-for header in kvm.h vfio.h vfio_ccw.h vhost.h \
+for header in kvm.h vfio.h vfio_ccw.h vfio_zdev.h vhost.h \
               psci.h psp-sev.h userfaultfd.h mman.h; do
     cp "$tmpdir/include/linux/$header" "$output/linux-headers/linux"
 done
@@ -186,10 +187,13 @@ rm -rf "$output/include/standard-headers/linux"
 mkdir -p "$output/include/standard-headers/linux"
 for i in "$tmpdir"/include/linux/*virtio*.h \
          "$tmpdir/include/linux/qemu_fw_cfg.h" \
+         "$tmpdir/include/linux/fuse.h" \
          "$tmpdir/include/linux/input.h" \
          "$tmpdir/include/linux/input-event-codes.h" \
          "$tmpdir/include/linux/pci_regs.h" \
-         "$tmpdir/include/linux/ethtool.h" "$tmpdir/include/linux/kernel.h" \
+         "$tmpdir/include/linux/ethtool.h" \
+         "$tmpdir/include/linux/const.h" \
+         "$tmpdir/include/linux/kernel.h" \
          "$tmpdir/include/linux/vhost_types.h" \
          "$tmpdir/include/linux/sysinfo.h"; do
     cp_portable "$i" "$output/include/standard-headers/linux"
@@ -211,8 +215,7 @@ sed  -e '1h;2,$H;$!d;g'  -e 's/[^};]*pvrdma[^(| ]*([^)]*);//g' \
     "$linux/drivers/infiniband/hw/vmw_pvrdma/pvrdma_verbs.h" > \
     "$tmp_pvrdma_verbs";
 
-for i in "$linux/drivers/infiniband/hw/vmw_pvrdma/pvrdma_ring.h" \
-         "$linux/drivers/infiniband/hw/vmw_pvrdma/pvrdma_dev_api.h" \
+for i in "$linux/drivers/infiniband/hw/vmw_pvrdma/pvrdma_dev_api.h" \
          "$tmp_pvrdma_verbs"; do \
     cp_portable "$i" \
          "$output/include/standard-headers/drivers/infiniband/hw/vmw_pvrdma/"

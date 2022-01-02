@@ -6,7 +6,8 @@ config ARM_VIRT
     imply VFIO_PLATFORM
     imply VFIO_XGMAC
     imply WZAB
-    select A15MPCORE
+    imply TPM_TIS_SYSBUS
+    select ARM_GIC
     select ACPI
     select ARM_SMMUV3
     select GPIO_KEY
@@ -17,10 +18,17 @@ config ARM_VIRT
     select PL011 # UART
     select PL031 # RTC
     select PL061 # GPIO
+    select GPIO_PWR
     select PLATFORM_BUS
     select SMBIOS
     select VIRTIO_MMIO
     select ACPI_PCI
+    select MEM_DEVICE
+    select DIMM
+    select ACPI_MEMORY_HOTPLUG
+    select ACPI_HW_REDUCED
+    select ACPI_NVDIMM
+    select ACPI_APEI
 
 config CHEETAH
     bool
@@ -45,6 +53,7 @@ config EXYNOS4
     select PTIMER
     select SDHCI
     select USB_EHCI_SYSBUS
+    select OR_IRQ
 
 config HIGHBANK
     bool
@@ -54,7 +63,7 @@ config HIGHBANK
     select ARM_TIMER # sp804
     select ARM_V7M
     select PL011 # UART
-    select PL022 # Serial port
+    select PL022 # SPI
     select PL031 # RTC
     select PL061 # GPIO
     select PL310 # cache controller
@@ -66,6 +75,7 @@ config INTEGRATOR
     select INTEGRATOR_DEBUG
     select PL011 # UART
     select PL031 # RTC
+    select PL041 # audio
     select PL050 # keyboard/mouse
     select PL110 # pl111 LCD controller
     select PL181 # display
@@ -82,9 +92,12 @@ config MUSCA
     select ARMSSE
     select PL011
     select PL031
+    select SPLIT_IRQ
+    select UNIMP
 
 config MUSICPAL
     bool
+    select OR_IRQ
     select BITBANG_I2C
     select MARVELL_88W8618
     select PTIMER
@@ -95,6 +108,10 @@ config MUSICPAL
 config NETDUINO2
     bool
     select STM32F205_SOC
+
+config NETDUINOPLUS2
+    bool
+    select STM32F405_SOC
 
 config NSERIES
     bool
@@ -138,10 +155,11 @@ config TOSA
     select ZAURUS  # scoop
     select MICRODRIVE
     select PXA2XX
+    select LED
 
 config SPITZ
     bool
-    select ADS7846 # display
+    select ADS7846 # touch-screen controller
     select MAX111X # A/D converter
     select WM8750  # audio codec
     select MAX7310 # GPIO expander
@@ -198,6 +216,7 @@ config SBSA_REF
     select PL031 # RTC
     select PL061 # GPIO
     select USB_EHCI_SYSBUS
+    select WDT_SBSA
 
 config SABRELITE
     bool
@@ -210,13 +229,14 @@ config STELLARIS
     select CMSDK_APB_WATCHDOG
     select I2C
     select PL011 # UART
-    select PL022 # Serial port
+    select PL022 # SPI
     select PL061 # GPIO
     select SSD0303 # OLED display
     select SSD0323 # OLED display
     select SSI_SD
     select STELLARIS_INPUT
     select STELLARIS_ENET # ethernet
+    select UNIMP
 
 config STRONGARM
     bool
@@ -275,6 +295,7 @@ config ZYNQ
 
 config ARM_V7M
     bool
+    select PTIMER
 
 config ALLWINNER_A10
     bool
@@ -283,21 +304,43 @@ config ALLWINNER_A10
     select ALLWINNER_A10_PIC
     select ALLWINNER_EMAC
     select SERIAL
+    select UNIMP
+
+config ALLWINNER_H3
+    bool
+    select ALLWINNER_A10_PIT
+    select ALLWINNER_SUN8I_EMAC
+    select SERIAL
+    select ARM_TIMER
+    select ARM_GIC
+    select UNIMP
+    select USB_OHCI
+    select USB_EHCI_SYSBUS
+    select SD
 
 config RASPI
     bool
     select FRAMEBUFFER
     select PL011 # UART
     select SDHCI
+    select USB_DWC2
 
 config STM32F205_SOC
     bool
     select ARM_V7M
+    select OR_IRQ
     select STM32F2XX_TIMER
     select STM32F2XX_USART
     select STM32F2XX_SYSCFG
     select STM32F2XX_ADC
     select STM32F2XX_SPI
+
+config STM32F405_SOC
+    bool
+    select ARM_V7M
+    select OR_IRQ
+    select STM32F4XX_SYSCFG
+    select STM32F4XX_EXTI
 
 config XLNX_ZYNQMP_ARM
     bool
@@ -311,7 +354,9 @@ config XLNX_ZYNQMP_ARM
     select SSI_M25P80
     select XILINX_AXI
     select XILINX_SPIPS
+    select XLNX_CSU_DMA
     select XLNX_ZYNQMP
+    select XLNX_ZDMA
 
 config XLNX_VERSAL
     bool
@@ -319,12 +364,26 @@ config XLNX_VERSAL
     select PL011
     select CADENCE
     select VIRTIO_MMIO
+    select UNIMP
+    select XLNX_ZDMA
+    select XLNX_ZYNQMP
+
+config NPCM7XX
+    bool
+    select A9MPCORE
+    select ARM_GIC
+    select AT24C  # EEPROM
+    select PL310  # cache controller
+    select SERIAL
+    select SSI
+    select UNIMP
 
 config FSL_IMX25
     bool
     select IMX
     select IMX_FEC
     select IMX_I2C
+    select WDT_IMX2
     select DS1338
 
 config FSL_IMX31
@@ -332,6 +391,7 @@ config FSL_IMX31
     select SERIAL
     select IMX
     select IMX_I2C
+    select WDT_IMX2
     select LAN9118
 
 config FSL_IMX6
@@ -340,6 +400,8 @@ config FSL_IMX6
     select IMX
     select IMX_FEC
     select IMX_I2C
+    select IMX_USBPHY
+    select WDT_IMX2
     select SDHCI
 
 config ASPEED_SOC
@@ -354,6 +416,9 @@ config ASPEED_SOC
     select SSI_M25P80
     select TMP105
     select TMP421
+    select EMC141X
+    select UNIMP
+    select LED
 
 config MPS2
     bool
@@ -361,8 +426,13 @@ config MPS2
     select LAN9118
     select MPS2_FPGAIO
     select MPS2_SCC
-    select PL022    # Serial port
+    select OR_IRQ
+    select PL022    # SPI
     select PL080    # DMA controller
+    select SPLIT_IRQ
+    select UNIMP
+    select CMSDK_APB_WATCHDOG
+    select VERSATILE_I2C
 
 config FSL_IMX7
     bool
@@ -373,8 +443,10 @@ config FSL_IMX7
     select IMX
     select IMX_FEC
     select IMX_I2C
+    select WDT_IMX2
     select PCI_EXPRESS_DESIGNWARE
     select SDHCI
+    select UNIMP
 
 config ARM_SMMUV3
     bool
@@ -385,7 +457,9 @@ config FSL_IMX6UL
     select IMX
     select IMX_FEC
     select IMX_I2C
+    select WDT_IMX2
     select SDHCI
+    select UNIMP
 
 config MICROBIT
     bool
@@ -395,6 +469,7 @@ config NRF51_SOC
     bool
     select I2C
     select ARM_V7M
+    select UNIMP
 
 config EMCRAFT_SF2
     bool
@@ -407,6 +482,7 @@ config MSF2
     select PTIMER
     select SERIAL
     select SSI
+    select UNIMP
 
 config ZAURUS
     bool
@@ -431,6 +507,7 @@ config ARM11MPCORE
 config ARMSSE
     bool
     select ARM_V7M
+    select ARMSSE_CPU_PWRCTRL
     select ARMSSE_CPUID
     select ARMSSE_MHU
     select CMSDK_APB_TIMER
@@ -440,12 +517,11 @@ config ARMSSE
     select IOTKIT_SECCTL
     select IOTKIT_SYSCTL
     select IOTKIT_SYSINFO
+    select OR_IRQ
+    select SPLIT_IRQ
     select TZ_MPC
     select TZ_MSC
     select TZ_PPC
-
-config ARMSSE_CPUID
-    bool
-
-config ARMSSE_MHU
-    bool
+    select UNIMP
+    select SSE_COUNTER
+    select SSE_TIMER

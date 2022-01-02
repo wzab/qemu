@@ -79,11 +79,11 @@ int qemu_v9fs_synth_mkdir(V9fsSynthNode *parent, int mode,
     if (!parent) {
         parent = &synth_root;
     }
-    qemu_mutex_lock(&synth_mutex);
+    QEMU_LOCK_GUARD(&synth_mutex);
     QLIST_FOREACH(tmp, &parent->child, sibling) {
         if (!strcmp(tmp->name, name)) {
             ret = EEXIST;
-            goto err_out;
+            return ret;
         }
     }
     /* Add the name */
@@ -94,8 +94,6 @@ int qemu_v9fs_synth_mkdir(V9fsSynthNode *parent, int mode,
                       node->attr, node->attr->inode);
     *result = node;
     ret = 0;
-err_out:
-    qemu_mutex_unlock(&synth_mutex);
     return ret;
 }
 
@@ -116,11 +114,11 @@ int qemu_v9fs_synth_add_file(V9fsSynthNode *parent, int mode,
         parent = &synth_root;
     }
 
-    qemu_mutex_lock(&synth_mutex);
+    QEMU_LOCK_GUARD(&synth_mutex);
     QLIST_FOREACH(tmp, &parent->child, sibling) {
         if (!strcmp(tmp->name, name)) {
             ret = EEXIST;
-            goto err_out;
+            return ret;
         }
     }
     /* Add file type and remove write bits */
@@ -136,8 +134,6 @@ int qemu_v9fs_synth_add_file(V9fsSynthNode *parent, int mode,
     pstrcpy(node->name, sizeof(node->name), name);
     QLIST_INSERT_HEAD_RCU(&parent->child, node, sibling);
     ret = 0;
-err_out:
-    qemu_mutex_unlock(&synth_mutex);
     return ret;
 }
 
@@ -578,6 +574,25 @@ static int synth_init(FsContext *ctx, Error **errp)
                                        NULL, v9fs_synth_qtest_flush_write,
                                        ctx);
         assert(!ret);
+
+        /* Directory for READDIR test */
+        {
+            V9fsSynthNode *dir = NULL;
+            ret = qemu_v9fs_synth_mkdir(
+                NULL, 0700, QTEST_V9FS_SYNTH_READDIR_DIR, &dir
+            );
+            assert(!ret);
+            for (i = 0; i < QTEST_V9FS_SYNTH_READDIR_NFILES; ++i) {
+                char *name = g_strdup_printf(
+                    QTEST_V9FS_SYNTH_READDIR_FILE, i
+                );
+                ret = qemu_v9fs_synth_add_file(
+                    dir, 0, name, NULL, NULL, ctx
+                );
+                assert(!ret);
+                g_free(name);
+            }
+        }
     }
 
     return 0;

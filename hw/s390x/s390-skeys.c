@@ -18,6 +18,7 @@
 #include "qapi/qmp/qdict.h"
 #include "qemu/error-report.h"
 #include "sysemu/kvm.h"
+#include "migration/qemu-file-types.h"
 #include "migration/register.h"
 
 #define S390_SKEYS_BUFFER_SIZE (128 * KiB)  /* Room for 128k storage keys */
@@ -44,10 +45,10 @@ void s390_skeys_init(void)
         obj = object_new(TYPE_QEMU_S390_SKEYS);
     }
     object_property_add_child(qdev_get_machine(), TYPE_S390_SKEYS,
-                              obj, NULL);
+                              obj);
     object_unref(obj);
 
-    qdev_init_nofail(DEVICE(obj));
+    qdev_realize(DEVICE(obj), NULL, &error_fatal);
 }
 
 static void write_keys(FILE *f, uint8_t *keys, uint64_t startgfn,
@@ -108,7 +109,8 @@ void qmp_dump_skeys(const char *filename, Error **errp)
 {
     S390SKeysState *ss = s390_get_skeys_device();
     S390SKeysClass *skeyclass = S390_SKEYS_GET_CLASS(ss);
-    const uint64_t total_count = ram_size / TARGET_PAGE_SIZE;
+    MachineState *ms = MACHINE(qdev_get_machine());
+    const uint64_t total_count = ms->ram_size / TARGET_PAGE_SIZE;
     uint64_t handled_count = 0, cur_count;
     Error *lerr = NULL;
     vaddr cur_gfn = 0;
@@ -124,7 +126,7 @@ void qmp_dump_skeys(const char *filename, Error **errp)
         return;
     }
 
-    fd = qemu_open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    fd = qemu_open_old(filename, O_WRONLY | O_CREAT | O_TRUNC, 0600);
     if (fd < 0) {
         error_setg_file_open(errp, errno, filename);
         return;
@@ -175,7 +177,7 @@ static void qemu_s390_skeys_init(Object *obj)
     QEMUS390SKeysState *skeys = QEMU_S390_SKEYS(obj);
     MachineState *machine = MACHINE(qdev_get_machine());
 
-    skeys->key_count = machine->maxram_size / TARGET_PAGE_SIZE;
+    skeys->key_count = machine->ram_size / TARGET_PAGE_SIZE;
     skeys->keydata = g_malloc0(skeys->key_count);
 }
 
@@ -255,7 +257,8 @@ static void s390_storage_keys_save(QEMUFile *f, void *opaque)
 {
     S390SKeysState *ss = S390_SKEYS(opaque);
     S390SKeysClass *skeyclass = S390_SKEYS_GET_CLASS(ss);
-    uint64_t pages_left = ram_size / TARGET_PAGE_SIZE;
+    MachineState *ms = MACHINE(qdev_get_machine());
+    uint64_t pages_left = ms->ram_size / TARGET_PAGE_SIZE;
     uint64_t read_count, eos = S390_SKEYS_SAVE_FLAG_EOS;
     vaddr cur_gfn = 0;
     int error = 0;
@@ -388,10 +391,10 @@ static inline void s390_skeys_set_migration_enabled(Object *obj, bool value,
     ss->migration_enabled = value;
 
     if (ss->migration_enabled) {
-        register_savevm_live(NULL, TYPE_S390_SKEYS, 0, 1,
+        register_savevm_live(TYPE_S390_SKEYS, 0, 1,
                              &savevm_s390_storage_keys, ss);
     } else {
-        unregister_savevm(DEVICE(ss), TYPE_S390_SKEYS, ss);
+        unregister_savevm(VMSTATE_IF(ss), TYPE_S390_SKEYS, ss);
     }
 }
 
@@ -399,8 +402,8 @@ static void s390_skeys_instance_init(Object *obj)
 {
     object_property_add_bool(obj, "migration-enabled",
                              s390_skeys_get_migration_enabled,
-                             s390_skeys_set_migration_enabled, NULL);
-    object_property_set_bool(obj, true, "migration-enabled", NULL);
+                             s390_skeys_set_migration_enabled);
+    object_property_set_bool(obj, "migration-enabled", true, NULL);
 }
 
 static void s390_skeys_class_init(ObjectClass *oc, void *data)

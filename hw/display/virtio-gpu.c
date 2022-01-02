@@ -17,12 +17,15 @@
 #include "ui/console.h"
 #include "trace.h"
 #include "sysemu/dma.h"
+#include "sysemu/sysemu.h"
 #include "hw/virtio/virtio.h"
+#include "migration/qemu-file-types.h"
 #include "hw/virtio/virtio-gpu.h"
 #include "hw/virtio/virtio-gpu-bswap.h"
 #include "hw/virtio/virtio-gpu-pixman.h"
 #include "hw/virtio/virtio-bus.h"
 #include "hw/display/edid.h"
+#include "hw/qdev-properties.h"
 #include "qemu/log.h"
 #include "qemu/module.h"
 #include "qapi/error.h"
@@ -209,6 +212,8 @@ virtio_gpu_generate_edid(VirtIOGPU *g, int scanout,
 {
     VirtIOGPUBase *b = VIRTIO_GPU_BASE(g);
     qemu_edid_info info = {
+        .width_mm = b->req_state[scanout].width_mm,
+        .height_mm = b->req_state[scanout].height_mm,
         .prefx = b->req_state[scanout].width,
         .prefy = b->req_state[scanout].height,
     };
@@ -320,7 +325,6 @@ static void virtio_gpu_disable_scanout(VirtIOGPU *g, int scanout_id)
 {
     struct virtio_gpu_scanout *scanout = &g->parent_obj.scanout[scanout_id];
     struct virtio_gpu_simple_resource *res;
-    DisplaySurface *ds = NULL;
 
     if (scanout->resource_id == 0) {
         return;
@@ -331,13 +335,7 @@ static void virtio_gpu_disable_scanout(VirtIOGPU *g, int scanout_id)
         res->scanout_bitmask &= ~(1 << scanout_id);
     }
 
-    if (scanout_id == 0) {
-        /* primary head */
-        ds = qemu_create_message_surface(scanout->width  ?: 640,
-                                         scanout->height ?: 480,
-                                         "Guest disabled display.");
-    }
-    dpy_gfx_replace_surface(scanout->con, ds);
+    dpy_gfx_replace_surface(scanout->con, NULL);
     scanout->resource_id = 0;
     scanout->ds = NULL;
     scanout->width = 0;
@@ -643,9 +641,9 @@ int virtio_gpu_create_mapping_iov(VirtIOGPU *g,
         uint64_t a = le64_to_cpu(ents[i].addr);
         uint32_t l = le32_to_cpu(ents[i].length);
         hwaddr len = l;
-        (*iov)[i].iov_len = l;
         (*iov)[i].iov_base = dma_memory_map(VIRTIO_DEVICE(g)->dma_as,
                                             a, &len, DMA_DIRECTION_TO_DEVICE);
+        (*iov)[i].iov_len = len;
         if (addr) {
             (*addr)[i] = a;
         }
@@ -653,6 +651,9 @@ int virtio_gpu_create_mapping_iov(VirtIOGPU *g,
             qemu_log_mask(LOG_GUEST_ERROR, "%s: failed to map MMIO memory for"
                           " resource %d element %d\n",
                           __func__, ab->resource_id, i);
+            if ((*iov)[i].iov_base) {
+                i++; /* cleanup the 'i'th map */
+            }
             virtio_gpu_cleanup_mapping_iov(g, *iov, i);
             g_free(ents);
             *iov = NULL;
@@ -806,6 +807,10 @@ void virtio_gpu_process_cmdq(VirtIOGPU *g)
 {
     struct virtio_gpu_ctrl_command *cmd;
 
+    if (g->processing_cmdq) {
+        return;
+    }
+    g->processing_cmdq = true;
     while (!QTAILQ_EMPTY(&g->cmdq)) {
         cmd = QTAILQ_FIRST(&g->cmdq);
 
@@ -835,9 +840,10 @@ void virtio_gpu_process_cmdq(VirtIOGPU *g)
             g_free(cmd);
         }
     }
+    g->processing_cmdq = false;
 }
 
-static void virtio_gpu_gl_unblock(VirtIOGPUBase *b)
+static void virtio_gpu_gl_flushed(VirtIOGPUBase *b)
 {
     VirtIOGPU *g = VIRTIO_GPU(b);
 
@@ -962,7 +968,7 @@ static const VMStateDescription vmstate_virtio_gpu_scanouts = {
 };
 
 static int virtio_gpu_save(QEMUFile *f, void *opaque, size_t size,
-                           const VMStateField *field, QJSON *vmdesc)
+                           const VMStateField *field, JSONWriter *vmdesc)
 {
     VirtIOGPU *g = opaque;
     struct virtio_gpu_simple_resource *res;
@@ -1244,14 +1250,14 @@ static void virtio_gpu_class_init(ObjectClass *klass, void *data)
     VirtioDeviceClass *vdc = VIRTIO_DEVICE_CLASS(klass);
     VirtIOGPUBaseClass *vgc = VIRTIO_GPU_BASE_CLASS(klass);
 
-    vgc->gl_unblock = virtio_gpu_gl_unblock;
+    vgc->gl_flushed = virtio_gpu_gl_flushed;
     vdc->realize = virtio_gpu_device_realize;
     vdc->reset = virtio_gpu_reset;
     vdc->get_config = virtio_gpu_get_config;
     vdc->set_config = virtio_gpu_set_config;
 
     dc->vmsd = &vmstate_virtio_gpu;
-    dc->props = virtio_gpu_properties;
+    device_class_set_props(dc, virtio_gpu_properties);
 }
 
 static const TypeInfo virtio_gpu_info = {

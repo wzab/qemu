@@ -35,13 +35,14 @@ static bool moxie_cpu_has_work(CPUState *cs)
     return cs->interrupt_request & CPU_INTERRUPT_HARD;
 }
 
-static void moxie_cpu_reset(CPUState *s)
+static void moxie_cpu_reset(DeviceState *dev)
 {
+    CPUState *s = CPU(dev);
     MoxieCPU *cpu = MOXIE_CPU(s);
     MoxieCPUClass *mcc = MOXIE_CPU_GET_CLASS(cpu);
     CPUMoxieState *env = &cpu->env;
 
-    mcc->parent_reset(s);
+    mcc->parent_reset(dev);
 
     memset(env, 0, offsetof(CPUMoxieState, end_reset_fields));
     env->pc = 0x1000;
@@ -93,6 +94,17 @@ static ObjectClass *moxie_cpu_class_by_name(const char *cpu_model)
     return oc;
 }
 
+#include "hw/core/tcg-cpu-ops.h"
+
+static struct TCGCPUOps moxie_tcg_ops = {
+    .initialize = moxie_translate_init,
+    .tlb_fill = moxie_cpu_tlb_fill,
+
+#ifndef CONFIG_USER_ONLY
+    .do_interrupt = moxie_cpu_do_interrupt,
+#endif /* !CONFIG_USER_ONLY */
+};
+
 static void moxie_cpu_class_init(ObjectClass *oc, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(oc);
@@ -101,22 +113,19 @@ static void moxie_cpu_class_init(ObjectClass *oc, void *data)
 
     device_class_set_parent_realize(dc, moxie_cpu_realizefn,
                                     &mcc->parent_realize);
-    mcc->parent_reset = cc->reset;
-    cc->reset = moxie_cpu_reset;
+    device_class_set_parent_reset(dc, moxie_cpu_reset, &mcc->parent_reset);
 
     cc->class_by_name = moxie_cpu_class_by_name;
 
     cc->has_work = moxie_cpu_has_work;
-    cc->do_interrupt = moxie_cpu_do_interrupt;
     cc->dump_state = moxie_cpu_dump_state;
     cc->set_pc = moxie_cpu_set_pc;
-    cc->tlb_fill = moxie_cpu_tlb_fill;
 #ifndef CONFIG_USER_ONLY
     cc->get_phys_page_debug = moxie_cpu_get_phys_page_debug;
     cc->vmsd = &vmstate_moxie_cpu;
 #endif
     cc->disas_set_info = moxie_cpu_disas_set_info;
-    cc->tcg_initialize = moxie_translate_init;
+    cc->tcg_ops = &moxie_tcg_ops;
 }
 
 static void moxielite_initfn(Object *obj)

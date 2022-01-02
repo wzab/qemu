@@ -96,6 +96,7 @@ static void init_libisa(XtensaConfig *config)
 
     config->isa = xtensa_isa_init(config->isa_internal, NULL, NULL);
     assert(xtensa_isa_maxlength(config->isa) <= MAX_INSN_LENGTH);
+    assert(xtensa_insnbuf_size(config->isa) <= MAX_INSNBUF_LENGTH);
     opcodes = xtensa_isa_num_opcodes(config->isa);
     formats = xtensa_isa_num_formats(config->isa);
     regfiles = xtensa_isa_num_regfiles(config->isa);
@@ -132,8 +133,10 @@ static void init_libisa(XtensaConfig *config)
     config->regfile = g_new(void **, regfiles);
     for (i = 0; i < regfiles; ++i) {
         const char *name = xtensa_regfile_name(config->isa, i);
+        int entries = xtensa_regfile_num_entries(config->isa, i);
+        int bits = xtensa_regfile_num_bits(config->isa, i);
 
-        config->regfile[i] = xtensa_get_regfile_by_name(name);
+        config->regfile[i] = xtensa_get_regfile_by_name(name, entries, bits);
 #ifdef DEBUG
         if (config->regfile[i] == NULL) {
             fprintf(stderr, "regfile '%s' not found for %s\n",
@@ -258,7 +261,7 @@ bool xtensa_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
     cpu_loop_exit_restore(cs, retaddr);
 }
 
-#else
+#else /* !CONFIG_USER_ONLY */
 
 void xtensa_cpu_do_unaligned_access(CPUState *cs,
                                     vaddr addr, MMUAccessType access_type,
@@ -334,4 +337,4 @@ void xtensa_runstall(CPUXtensaState *env, bool runstall)
         qemu_cpu_kick(cpu);
     }
 }
-#endif
+#endif /* !CONFIG_USER_ONLY */

@@ -11,13 +11,11 @@
  */
 
 #include "qemu/osdep.h"
+#include "hw/qdev-properties.h"
 #include "hw/virtio/virtio-gpu.h"
 #include "chardev/char-fe.h"
 #include "qapi/error.h"
 #include "migration/blocker.h"
-
-#define VHOST_USER_GPU(obj)                                    \
-    OBJECT_CHECK(VhostUserGPU, (obj), TYPE_VHOST_USER_GPU)
 
 typedef enum VhostUserGpuRequest {
     VHOST_USER_GPU_NONE = 0,
@@ -195,10 +193,8 @@ vhost_user_gpu_handle_display(VhostUserGPU *g, VhostUserGpuMsg *msg)
         s = &g->parent_obj.scanout[m->scanout_id];
         con = s->con;
 
-        if (m->scanout_id == 0 && m->width == 0) {
-            s->ds = qemu_create_message_surface(640, 480,
-                                                "Guest disabled display.");
-            dpy_gfx_replace_surface(con, s->ds);
+        if (m->width == 0) {
+            dpy_gfx_replace_surface(con, NULL);
         } else {
             s->ds = qemu_create_displaysurface(m->width, m->height);
             /* replace surface on next update */
@@ -225,11 +221,6 @@ vhost_user_gpu_handle_display(VhostUserGPU *g, VhostUserGpuMsg *msg)
         if (dmabuf->fd >= 0) {
             close(dmabuf->fd);
             dmabuf->fd = -1;
-        }
-        if (!console_has_gl_dmabuf(con)) {
-            /* it would be nice to report that error earlier */
-            error_report("console doesn't support dmabuf!");
-            break;
         }
         dpy_gl_release_dmabuf(con, dmabuf);
         if (fd == -1) {
@@ -334,7 +325,6 @@ vhost_user_gpu_chr_read(void *opaque)
     }
 
     msg = g_malloc(VHOST_USER_GPU_HDR_SIZE + size);
-    g_return_if_fail(msg != NULL);
 
     r = qemu_chr_fe_read_all(&g->vhost_chr,
                              (uint8_t *)&msg->payload, size);
@@ -367,7 +357,7 @@ vhost_user_gpu_update_blocked(VhostUserGPU *g, bool blocked)
 }
 
 static void
-vhost_user_gpu_gl_unblock(VirtIOGPUBase *b)
+vhost_user_gpu_gl_flushed(VirtIOGPUBase *b)
 {
     VhostUserGPU *g = VHOST_USER_GPU(b);
 
@@ -511,7 +501,7 @@ vhost_user_gpu_instance_init(Object *obj)
 
     g->vhost = VHOST_USER_BACKEND(object_new(TYPE_VHOST_USER_BACKEND));
     object_property_add_alias(obj, "chardev",
-                              OBJECT(g->vhost), "chardev", &error_abort);
+                              OBJECT(g->vhost), "chardev");
 }
 
 static void
@@ -554,8 +544,16 @@ vhost_user_gpu_device_realize(DeviceState *qdev, Error **errp)
         return;
     }
 
+    /* existing backend may send DMABUF, so let's add that requirement */
+    g->parent_obj.conf.flags |= 1 << VIRTIO_GPU_FLAG_DMABUF_ENABLED;
     if (virtio_has_feature(g->vhost->dev.features, VIRTIO_GPU_F_VIRGL)) {
         g->parent_obj.conf.flags |= 1 << VIRTIO_GPU_FLAG_VIRGL_ENABLED;
+    }
+    if (virtio_has_feature(g->vhost->dev.features, VIRTIO_GPU_F_EDID)) {
+        g->parent_obj.conf.flags |= 1 << VIRTIO_GPU_FLAG_EDID_ENABLED;
+    } else {
+        error_report("EDID requested but the backend doesn't support it.");
+        g->parent_obj.conf.flags &= ~(1 << VIRTIO_GPU_FLAG_EDID_ENABLED);
     }
 
     if (!virtio_gpu_base_device_realize(qdev, NULL, NULL, errp)) {
@@ -577,7 +575,7 @@ vhost_user_gpu_class_init(ObjectClass *klass, void *data)
     VirtioDeviceClass *vdc = VIRTIO_DEVICE_CLASS(klass);
     VirtIOGPUBaseClass *vgc = VIRTIO_GPU_BASE_CLASS(klass);
 
-    vgc->gl_unblock = vhost_user_gpu_gl_unblock;
+    vgc->gl_flushed = vhost_user_gpu_gl_flushed;
 
     vdc->realize = vhost_user_gpu_device_realize;
     vdc->reset = vhost_user_gpu_reset;
@@ -587,7 +585,7 @@ vhost_user_gpu_class_init(ObjectClass *klass, void *data)
     vdc->get_config = vhost_user_gpu_get_config;
     vdc->set_config = vhost_user_gpu_set_config;
 
-    dc->props = vhost_user_gpu_properties;
+    device_class_set_props(dc, vhost_user_gpu_properties);
 }
 
 static const TypeInfo vhost_user_gpu_info = {

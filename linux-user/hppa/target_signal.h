@@ -34,6 +34,7 @@
 #define TARGET_SIGURG          29
 #define TARGET_SIGXFSZ         30
 #define TARGET_SIGSYS          31
+#define TARGET_SIGRTMIN        32
 
 #define TARGET_SIG_BLOCK       0
 #define TARGET_SIG_UNBLOCK     1
@@ -43,7 +44,7 @@
 
 typedef struct target_sigaltstack {
     abi_ulong ss_sp;
-    int32_t ss_flags;
+    abi_int ss_flags;
     abi_ulong ss_size;
 } target_stack_t;
 
@@ -64,5 +65,10 @@ typedef struct target_sigaltstack {
 
 #define TARGET_MINSIGSTKSZ	2048
 #define TARGET_SIGSTKSZ		8192
+
+/* bit-flags */
+#define TARGET_SS_AUTODISARM (1U << 31) /* disable sas during sighandling */
+/* mask for all SS_xxx flags */
+#define TARGET_SS_FLAG_BITS  TARGET_SS_AUTODISARM
 
 #endif /* HPPA_TARGET_SIGNAL_H */

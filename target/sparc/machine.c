@@ -1,8 +1,6 @@
 #include "qemu/osdep.h"
 #include "cpu.h"
 #include "exec/exec-all.h"
-#include "hw/hw.h"
-#include "hw/boards.h"
 #include "qemu/timer.h"
 
 #include "migration/cpu.h"
@@ -70,7 +68,7 @@ static int get_psr(QEMUFile *f, void *opaque, size_t size,
 }
 
 static int put_psr(QEMUFile *f, void *opaque, size_t size,
-                   const VMStateField *field, QJSON *vmdesc)
+                   const VMStateField *field, JSONWriter *vmdesc)
 {
     SPARCCPU *cpu = opaque;
     CPUSPARCState *env = &cpu->env;

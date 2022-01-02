@@ -29,10 +29,9 @@
 #include "cpu.h"
 #include "chardev/char-fe.h"
 #include "exec/helper-proto.h"
-#include "hw/semihosting/semihost.h"
+#include "semihosting/semihost.h"
 #include "qapi/error.h"
 #include "qemu/log.h"
-#include "sysemu/sysemu.h"
 
 enum {
     TARGET_SYS_exit = 1,

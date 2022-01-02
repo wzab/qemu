@@ -22,6 +22,9 @@ config ECC
 config ONENAND
     bool
 
+config TC58128
+    bool
+
 config NVME_PCI
     bool
     default y if PCI_DEVICES
@@ -37,3 +40,6 @@ config VHOST_USER_BLK
     # Only PCI devices are provided for now
     default y if VIRTIO_PCI
     depends on VIRTIO && VHOST_USER && LINUX
+
+config SWIM
+    bool

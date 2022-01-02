@@ -1,15 +1,11 @@
 #ifndef UI_GTK_H
 #define UI_GTK_H
 
-#ifdef CONFIG_PRAGMA_DIAGNOSTIC_AVAILABLE
 /* Work around an -Wstrict-prototypes warning in GTK headers */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstrict-prototypes"
-#endif
 #include <gtk/gtk.h>
-#ifdef CONFIG_PRAGMA_DIAGNOSTIC_AVAILABLE
 #pragma GCC diagnostic pop
-#endif
 
 #include <gdk/gdkkeysyms.h>
 
@@ -52,6 +48,7 @@ typedef struct VirtualGfxConsole {
     int cursor_y;
     bool y0_top;
     bool scanout_mode;
+    bool has_dmabuf;
 #endif
 } VirtualGfxConsole;
 
@@ -90,6 +87,7 @@ extern bool gtk_use_gl_area;
 
 /* ui/gtk.c */
 void gd_update_windowsize(VirtualConsole *vc);
+int gd_monitor_update_interval(GtkWidget *widget);
 
 /* ui/gtk-egl.c */
 void gd_egl_init(VirtualConsole *vc);
@@ -136,6 +134,8 @@ QEMUGLContext gd_gl_area_create_context(DisplayChangeListener *dcl,
                                         QEMUGLParams *params);
 void gd_gl_area_destroy_context(DisplayChangeListener *dcl,
                                 QEMUGLContext ctx);
+void gd_gl_area_scanout_dmabuf(DisplayChangeListener *dcl,
+                               QemuDmaBuf *dmabuf);
 void gd_gl_area_scanout_texture(DisplayChangeListener *dcl,
                                 uint32_t backing_id,
                                 bool backing_y_0_top,
@@ -143,10 +143,10 @@ void gd_gl_area_scanout_texture(DisplayChangeListener *dcl,
                                 uint32_t backing_height,
                                 uint32_t x, uint32_t y,
                                 uint32_t w, uint32_t h);
+void gd_gl_area_scanout_disable(DisplayChangeListener *dcl);
 void gd_gl_area_scanout_flush(DisplayChangeListener *dcl,
                               uint32_t x, uint32_t y, uint32_t w, uint32_t h);
 void gtk_gl_area_init(void);
-QEMUGLContext gd_gl_area_get_current_context(DisplayChangeListener *dcl);
 int gd_gl_area_make_current(DisplayChangeListener *dcl,
                             QEMUGLContext ctx);
 

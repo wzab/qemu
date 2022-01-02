@@ -3,7 +3,11 @@
 
 #include <epoxy/gl.h>
 #include <epoxy/egl.h>
+#ifdef CONFIG_GBM
 #include <gbm.h>
+#endif
+#include "ui/console.h"
+#include "ui/shader.h"
 
 extern EGLDisplay *qemu_egl_display;
 extern EGLConfig qemu_egl_config;
@@ -23,13 +27,13 @@ void egl_fb_setup_for_tex(egl_fb *fb, int width, int height,
                           GLuint texture, bool delete);
 void egl_fb_setup_new_tex(egl_fb *fb, int width, int height);
 void egl_fb_blit(egl_fb *dst, egl_fb *src, bool flip);
-void egl_fb_read(void *dst, egl_fb *src);
+void egl_fb_read(DisplaySurface *dst, egl_fb *src);
 
 void egl_texture_blit(QemuGLShader *gls, egl_fb *dst, egl_fb *src, bool flip);
 void egl_texture_blend(QemuGLShader *gls, egl_fb *dst, egl_fb *src, bool flip,
                        int x, int y, double scale_x, double scale_y);
 
-#ifdef CONFIG_OPENGL_DMABUF
+#ifdef CONFIG_GBM
 
 extern int qemu_egl_rn_fd;
 extern struct gbm_device *qemu_egl_rn_gbm_dev;
@@ -46,8 +50,14 @@ void egl_dmabuf_release_texture(QemuDmaBuf *dmabuf);
 
 EGLSurface qemu_egl_init_surface_x11(EGLContext ectx, EGLNativeWindowType win);
 
+#if defined(CONFIG_X11) || defined(CONFIG_GBM)
+
 int qemu_egl_init_dpy_x11(EGLNativeDisplayType dpy, DisplayGLMode mode);
 int qemu_egl_init_dpy_mesa(EGLNativeDisplayType dpy, DisplayGLMode mode);
+
+#endif
+
 EGLContext qemu_egl_init_ctx(void);
+bool qemu_egl_has_dmabuf(void);
 
 #endif /* EGL_HELPERS_H */

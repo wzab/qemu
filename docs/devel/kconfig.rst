@@ -1,3 +1,5 @@
+.. _kconfig:
+
 ================
 QEMU and Kconfig
 ================
@@ -8,7 +10,7 @@ time different targets can share large amounts of code.  For example,
 a POWER and an x86 board can run the same code to emulate a PCI network
 card, even though the boards use different PCI host bridges, and they
 can run the same code to emulate a SCSI disk while using different
-SCSI adapters.  ARM, s390 and x86 boards can all present a virtio-blk
+SCSI adapters.  Arm, s390 and x86 boards can all present a virtio-blk
 disk to their guests, but with three different virtio guest interfaces.
 
 Each QEMU target enables a subset of the boards, devices and buses that
@@ -286,21 +288,20 @@ they will include all these symbols and some help text on what they do.
 ----------------
 
 In some special cases, a configurable element depends on host features
-that are detected by QEMU's configure script; for example some devices
-depend on the availability of KVM or on the presence of a library on
-the host.
+that are detected by QEMU's configure or ``meson.build`` scripts; for
+example some devices depend on the availability of KVM or on the presence
+of a library on the host.
 
 These symbols should be listed in ``Kconfig.host`` like this::
 
-    config KVM
+    config TPM
       bool
 
-and also listed as follows in the top-level Makefile's ``MINIKCONF_ARGS``
+and also listed as follows in the top-level meson.build's host_kconfig
 variable::
 
-    MINIKCONF_ARGS = \
-      $@ $*/config-devices.mak.d $< $(MINIKCONF_INPUTS) \
-      CONFIG_KVM=$(CONFIG_KVM) \
-      CONFIG_SPICE=$(CONFIG_SPICE) \
-      CONFIG_TPM=$(CONFIG_TPM) \
+    host_kconfig = \
+      ('CONFIG_TPM' in config_host ? ['CONFIG_TPM=y'] : []) + \
+      ('CONFIG_SPICE' in config_host ? ['CONFIG_SPICE=y'] : []) + \
+      ('CONFIG_IVSHMEM' in config_host ? ['CONFIG_IVSHMEM=y'] : []) + \
       ...

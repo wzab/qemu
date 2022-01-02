@@ -16,6 +16,7 @@
 #include "qapi/error.h"
 #include "trace.h"
 #include "qemu/iov.h"
+#include "qemu/main-loop.h"
 #include "qemu/thread.h"
 #include "qemu/error-report.h"
 #include "hw/virtio/virtio-access.h"
@@ -66,7 +67,7 @@ static void notify_guest_bh(void *opaque)
     memset(s->batch_notify_vqs, 0, sizeof(bitmap));
 
     for (j = 0; j < nvqs; j += BITS_PER_LONG) {
-        unsigned long bits = bitmap[j];
+        unsigned long bits = bitmap[j / BITS_PER_LONG];
 
         while (bits != 0) {
             unsigned i = j + ctzl(bits);
@@ -171,6 +172,7 @@ int virtio_blk_data_plane_start(VirtIODevice *vdev)
     VirtIOBlockDataPlane *s = vblk->dataplane;
     BusState *qbus = BUS(qdev_get_parent_bus(DEVICE(vblk)));
     VirtioBusClass *k = VIRTIO_BUS_GET_CLASS(qbus);
+    AioContext *old_context;
     unsigned i;
     unsigned nvqs = s->conf->num_queues;
     Error *local_err = NULL;
@@ -213,11 +215,17 @@ int virtio_blk_data_plane_start(VirtIODevice *vdev)
     vblk->dataplane_started = true;
     trace_virtio_blk_data_plane_start(s);
 
+    old_context = blk_get_aio_context(s->conf->conf.blk);
+    aio_context_acquire(old_context);
     r = blk_set_aio_context(s->conf->conf.blk, s->ctx, &local_err);
+    aio_context_release(old_context);
     if (r < 0) {
         error_report_err(local_err);
         goto fail_guest_notifiers;
     }
+
+    /* Process queued requests before the ones in vring */
+    virtio_blk_process_queued_requests(vblk, false);
 
     /* Kick right away to begin processing requests already in vring */
     for (i = 0; i < nvqs; i++) {
@@ -238,6 +246,11 @@ int virtio_blk_data_plane_start(VirtIODevice *vdev)
     return 0;
 
   fail_guest_notifiers:
+    /*
+     * If we failed to set up the guest notifiers queued requests will be
+     * processed on the main context.
+     */
+    virtio_blk_process_queued_requests(vblk, false);
     vblk->dataplane_disabled = true;
     s->starting = false;
     vblk->dataplane_started = true;
@@ -296,6 +309,9 @@ void virtio_blk_data_plane_stop(VirtIODevice *vdev)
         virtio_bus_set_host_notifier(VIRTIO_BUS(qbus), i, false);
         virtio_bus_cleanup_host_notifier(VIRTIO_BUS(qbus), i);
     }
+
+    qemu_bh_cancel(s->bh);
+    notify_guest_bh(s); /* final chance to notify guest */
 
     /* Clean up guest notifier (irq) */
     k->set_guest_notifiers(qbus->parent, nvqs, false);

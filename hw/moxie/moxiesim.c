@@ -24,13 +24,14 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+
 #include "qemu/osdep.h"
 #include "qemu/error-report.h"
 #include "qapi/error.h"
 #include "cpu.h"
 #include "hw/sysbus.h"
-#include "hw/hw.h"
 #include "net/net.h"
+#include "sysemu/reset.h"
 #include "sysemu/sysemu.h"
 #include "hw/boards.h"
 #include "hw/loader.h"
@@ -51,13 +52,13 @@ typedef struct {
 
 static void load_kernel(MoxieCPU *cpu, LoaderParams *loader_params)
 {
-    uint64_t entry, kernel_low, kernel_high;
+    uint64_t entry, kernel_high;
     int64_t initrd_size;
     long kernel_size;
     ram_addr_t initrd_offset;
 
     kernel_size = load_elf(loader_params->kernel_filename,  NULL, NULL, NULL,
-                           &entry, &kernel_low, &kernel_high, 1, EM_MOXIE,
+                           &entry, NULL, &kernel_high, NULL, 1, EM_MOXIE,
                            0, 0);
 
     if (kernel_size <= 0) {
@@ -81,7 +82,7 @@ static void load_kernel(MoxieCPU *cpu, LoaderParams *loader_params)
             }
             initrd_size = load_image_targphys(loader_params->initrd_filename,
                                               initrd_offset,
-                                              ram_size);
+                                              loader_params->ram_size);
         }
         if (initrd_size == (target_ulong)-1) {
             error_report("could not load initial ram disk '%s'",
@@ -132,9 +133,9 @@ static void moxiesim_init(MachineState *machine)
         loader_params.initrd_filename = initrd_filename;
         load_kernel(cpu, &loader_params);
     }
-    if (bios_name) {
-        if (load_image_targphys(bios_name, FIRMWARE_BASE, FIRMWARE_SIZE) < 0) {
-            error_report("Failed to load firmware '%s'", bios_name);
+    if (machine->firmware) {
+        if (load_image_targphys(machine->firmware, FIRMWARE_BASE, FIRMWARE_SIZE) < 0) {
+            error_report("Failed to load firmware '%s'", machine->firmware);
         }
     }
 
@@ -149,7 +150,7 @@ static void moxiesim_machine_init(MachineClass *mc)
 {
     mc->desc = "Moxie simulator platform";
     mc->init = moxiesim_init;
-    mc->is_default = 1;
+    mc->is_default = true;
     mc->default_cpu_type = MOXIE_CPU_TYPE_NAME("MoxieLite");
 }
 

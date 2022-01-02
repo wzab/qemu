@@ -24,7 +24,6 @@
 #include <sys/ioctl.h>
 #include <sys/wait.h>
 
-#include "hw/hw.h"
 #include "net/net.h"
 #include "net/checksum.h"
 #include "net/util.h"
@@ -175,7 +174,7 @@ static void net_tx_packets(struct XenNetDev *netdev)
                     tmpbuf = g_malloc(XC_PAGE_SIZE);
                 }
                 memcpy(tmpbuf, page + txreq.offset, txreq.size);
-                net_checksum_calculate(tmpbuf, txreq.size);
+                net_checksum_calculate(tmpbuf, txreq.size, CSUM_ALL);
                 qemu_send_packet(qemu_get_queue(netdev->nic), tmpbuf,
                                  txreq.size);
             } else {

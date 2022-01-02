@@ -102,12 +102,12 @@ void egl_fb_blit(egl_fb *dst, egl_fb *src, bool flip)
                       GL_COLOR_BUFFER_BIT, GL_LINEAR);
 }
 
-void egl_fb_read(void *dst, egl_fb *src)
+void egl_fb_read(DisplaySurface *dst, egl_fb *src)
 {
     glBindFramebuffer(GL_READ_FRAMEBUFFER, src->framebuffer);
     glReadBuffer(GL_COLOR_ATTACHMENT0_EXT);
-    glReadPixels(0, 0, src->width, src->height,
-                 GL_BGRA, GL_UNSIGNED_BYTE, dst);
+    glReadPixels(0, 0, surface_width(dst), surface_height(dst),
+                 GL_BGRA, GL_UNSIGNED_BYTE, surface_data(dst));
 }
 
 void egl_texture_blit(QemuGLShader *gls, egl_fb *dst, egl_fb *src, bool flip)
@@ -140,7 +140,7 @@ void egl_texture_blend(QemuGLShader *gls, egl_fb *dst, egl_fb *src, bool flip,
 
 /* ---------------------------------------------------------------------- */
 
-#ifdef CONFIG_OPENGL_DMABUF
+#ifdef CONFIG_GBM
 
 int qemu_egl_rn_fd;
 struct gbm_device *qemu_egl_rn_gbm_dev;
@@ -287,7 +287,7 @@ void egl_dmabuf_release_texture(QemuDmaBuf *dmabuf)
     dmabuf->texture = 0;
 }
 
-#endif /* CONFIG_OPENGL_DMABUF */
+#endif /* CONFIG_GBM */
 
 /* ---------------------------------------------------------------------- */
 
@@ -314,6 +314,8 @@ EGLSurface qemu_egl_init_surface_x11(EGLContext ectx, EGLNativeWindowType win)
 }
 
 /* ---------------------------------------------------------------------- */
+
+#if defined(CONFIG_X11) || defined(CONFIG_GBM)
 
 /*
  * Taken from glamor_egl.h from the Xorg xserver, which is MIT licensed
@@ -439,6 +441,18 @@ int qemu_egl_init_dpy_mesa(EGLNativeDisplayType dpy, DisplayGLMode mode)
 #else
     return qemu_egl_init_dpy(dpy, 0, mode);
 #endif
+}
+
+#endif
+
+bool qemu_egl_has_dmabuf(void)
+{
+    if (qemu_egl_display == EGL_NO_DISPLAY) {
+        return false;
+    }
+
+    return epoxy_has_egl_extension(qemu_egl_display,
+                                   "EGL_EXT_image_dma_buf_import");
 }
 
 EGLContext qemu_egl_init_ctx(void)

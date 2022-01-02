@@ -22,13 +22,18 @@
  * You should have received a copy of the GNU General Public License along
  * with this program; if not, see <http://www.gnu.org/licenses/>.
  */
+
 #ifndef HW_ACPI_PCI_H
 #define HW_ACPI_PCI_H
+
+#include "hw/acpi/bios-linker-loader.h"
 
 typedef struct AcpiMcfgInfo {
     uint64_t base;
     uint32_t size;
 } AcpiMcfgInfo;
 
-void build_mcfg(GArray *table_data, BIOSLinker *linker, AcpiMcfgInfo *info);
+void build_mcfg(GArray *table_data, BIOSLinker *linker, AcpiMcfgInfo *info,
+                const char *oem_id, const char *oem_table_id);
+Aml *aml_pci_device_dsm(void);
 #endif

@@ -3,13 +3,15 @@
  * Eddie James <eajames@linux.ibm.com>
  *
  * Copyright (C) 2019 IBM Corp
- * SPDX-License-Identifer: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
 #include "qemu/osdep.h"
 #include "qemu/log.h"
 #include "qemu/error-report.h"
+#include "hw/irq.h"
 #include "hw/misc/aspeed_xdma.h"
+#include "migration/vmstate.h"
 #include "qapi/error.h"
 
 #include "trace.h"

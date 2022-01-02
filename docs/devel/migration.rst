@@ -50,6 +50,27 @@ All these migration protocols use the same infrastructure to
 save/restore state devices.  This infrastructure is shared with the
 savevm/loadvm functionality.
 
+Debugging
+=========
+
+The migration stream can be analyzed thanks to `scripts/analyze-migration.py`.
+
+Example usage:
+
+.. code-block:: shell
+
+  $ qemu-system-x86_64 -display none -monitor stdio
+  (qemu) migrate "exec:cat > mig"
+  (qemu) q
+  $ ./scripts/analyze-migration.py -f mig
+  {
+    "ram (3)": {
+        "section sizes": {
+            "pc.ram": "0x0000000008000000",
+  ...
+
+See also ``analyze-migration.py -h`` help for more options.
+
 Common infrastructure
 =====================
 
@@ -183,8 +204,7 @@ another to load the state back.
 
 .. code:: c
 
-  int register_savevm_live(DeviceState *dev,
-                           const char *idstr,
+  int register_savevm_live(const char *idstr,
                            int instance_id,
                            int version_id,
                            SaveVMHandlers *ops,
@@ -314,7 +334,7 @@ For example:
 
    a) Add a new property using ``DEFINE_PROP_BOOL`` - e.g. support-foo and
       default it to true.
-   b) Add an entry to the ``HW_COMPAT_`` for the previous version that sets
+   b) Add an entry to the ``hw_compat_`` for the previous version that sets
       the property to false.
    c) Add a static bool  support_foo function that tests the property.
    d) Add a subsection with a .needed set to the support_foo function
@@ -606,7 +626,7 @@ It can be issued immediately after migration is started or any
 time later on.  Issuing it after the end of a migration is harmless.
 
 Blocktime is a postcopy live migration metric, intended to show how
-long the vCPU was in state of interruptable sleep due to pagefault.
+long the vCPU was in state of interruptible sleep due to pagefault.
 That metric is calculated both for all vCPUs as overlapped value, and
 separately for each vCPU. These values are calculated on destination
 side.  To enable postcopy blocktime calculation, enter following
@@ -621,7 +641,7 @@ time per vCPU.
 
 .. note::
   During the postcopy phase, the bandwidth limits set using
-  ``migrate_set_speed`` is ignored (to avoid delaying requested pages that
+  ``migrate_set_parameter`` is ignored (to avoid delaying requested pages that
   the destination is waiting for).
 
 Postcopy device transfer

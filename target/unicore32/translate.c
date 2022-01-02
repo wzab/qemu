@@ -13,7 +13,7 @@
 #include "cpu.h"
 #include "disas/disas.h"
 #include "exec/exec-all.h"
-#include "tcg-op.h"
+#include "tcg/tcg-op.h"
 #include "qemu/log.h"
 #include "exec/cpu_ldst.h"
 #include "exec/translator.h"
@@ -34,7 +34,7 @@ typedef struct DisasContext {
     int condjmp;
     /* The label that will be jumped to when the instruction is skipped.  */
     TCGLabel *condlabel;
-    struct TranslationBlock *tb;
+    TranslationBlock *tb;
     int singlestep_enabled;
 #ifndef CONFIG_USER_ONLY
     int user;
@@ -1801,6 +1801,7 @@ static void disas_uc32_insn(CPUUniCore32State *env, DisasContext *s)
             do_misc(env, s, insn);
             break;
         }
+        /* fallthrough */
     case 0x1:
         if (((UCOP_OPCODES >> 2) == 2) && !UCOP_SET_S) {
             do_misc(env, s, insn);
@@ -1817,6 +1818,7 @@ static void disas_uc32_insn(CPUUniCore32State *env, DisasContext *s)
         if (UCOP_SET(8) || UCOP_SET(5)) {
             ILLEGAL;
         }
+        /* fallthrough */
     case 0x3:
         do_ldst_ir(env, s, insn);
         break;
@@ -1931,7 +1933,6 @@ void gen_intermediate_code(CPUState *cs, TranslationBlock *tb, int max_insns)
                code.  */
             cpu_abort(cs, "IO on conditional branch instruction");
         }
-        gen_io_end();
     }
 
     /* At this stage dc->condjmp will only be set when the skipped
@@ -1995,12 +1996,12 @@ done_generating:
 #ifdef DEBUG_DISAS
     if (qemu_loglevel_mask(CPU_LOG_TB_IN_ASM)
         && qemu_log_in_addr_range(pc_start)) {
-        qemu_log_lock();
+        FILE *logfile = qemu_log_lock();
         qemu_log("----------------\n");
         qemu_log("IN: %s\n", lookup_symbol(pc_start));
         log_target_disas(cs, pc_start, dc->pc - pc_start);
         qemu_log("\n");
-        qemu_log_unlock();
+        qemu_log_unlock(logfile);
     }
 #endif
     tb->size = dc->pc - pc_start;

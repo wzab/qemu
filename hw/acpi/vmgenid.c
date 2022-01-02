@@ -12,16 +12,19 @@
 
 #include "qemu/osdep.h"
 #include "qapi/error.h"
-#include "qapi/qapi-commands-misc.h"
+#include "qapi/qapi-commands-machine.h"
 #include "qemu/module.h"
 #include "hw/acpi/acpi.h"
 #include "hw/acpi/aml-build.h"
 #include "hw/acpi/vmgenid.h"
 #include "hw/nvram/fw_cfg.h"
-#include "sysemu/sysemu.h"
+#include "hw/qdev-properties.h"
+#include "hw/qdev-properties-system.h"
+#include "migration/vmstate.h"
+#include "sysemu/reset.h"
 
 void vmgenid_build_acpi(VmGenIdState *vms, GArray *table_data, GArray *guid,
-                        BIOSLinker *linker)
+                        BIOSLinker *linker, const char *oem_id)
 {
     Aml *ssdt, *dev, *scope, *method, *addr, *if_ctx;
     uint32_t vgia_offset;
@@ -115,7 +118,7 @@ void vmgenid_build_acpi(VmGenIdState *vms, GArray *table_data, GArray *guid,
 
     build_header(linker, table_data,
         (void *)(table_data->data + table_data->len - ssdt->buf->len),
-        "SSDT", ssdt->buf->len, 1, NULL, "VMGENID");
+        "SSDT", ssdt->buf->len, 1, oem_id, "VMGENID");
     free_aml_allocator();
 }
 
@@ -196,7 +199,7 @@ static void vmgenid_realize(DeviceState *dev, Error **errp)
 
     if (!bios_linker_loader_can_write_pointer()) {
         error_setg(errp, "%s requires DMA write support in fw_cfg, "
-                   "which this machine type does not provide", VMGENID_DEVICE);
+                   "which this machine type does not provide", TYPE_VMGENID);
         return;
     }
 
@@ -204,7 +207,7 @@ static void vmgenid_realize(DeviceState *dev, Error **errp)
      * device. Check if there are several.
      */
     if (!find_vmgenid_dev()) {
-        error_setg(errp, "at most one %s device is permitted", VMGENID_DEVICE);
+        error_setg(errp, "at most one %s device is permitted", TYPE_VMGENID);
         return;
     }
 
@@ -224,13 +227,13 @@ static void vmgenid_device_class_init(ObjectClass *klass, void *data)
 
     dc->vmsd = &vmstate_vmgenid;
     dc->realize = vmgenid_realize;
-    dc->props = vmgenid_device_properties;
+    device_class_set_props(dc, vmgenid_device_properties);
     dc->hotpluggable = false;
     set_bit(DEVICE_CATEGORY_MISC, dc->categories);
 }
 
 static const TypeInfo vmgenid_device_info = {
-    .name          = VMGENID_DEVICE,
+    .name          = TYPE_VMGENID,
     .parent        = TYPE_DEVICE,
     .instance_size = sizeof(VmGenIdState),
     .class_init    = vmgenid_device_class_init,
