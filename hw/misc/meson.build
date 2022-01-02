@@ -130,3 +130,13 @@ specific_ss.add(when: 'CONFIG_MIPS_CPS', if_true: files('mips_cmgcr.c', 'mips_cp
 specific_ss.add(when: 'CONFIG_MIPS_ITU', if_true: files('mips_itu.c'))
 
 specific_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
+
+#WZab added devices
+
+softmmu_ss.add(when: 'CONFIG_WZAB_PCI', if_true: files('wzab_enc1.o'))
+softmmu_ss.add(when: 'CONFIG_WZAB_PCI', if_true: files('wzab_adc1.o'))
+
+softmmu_ss.add(when: 'CONFIG_WZAB', if_true: files('wzab_sysbus_enc1.o'))
+softmmu_ss.add(when: 'CONFIG_WZAB', if_true: files('wzab_sysbus_adc1.o'))
+softmmu_ss.add(when: 'CONFIG_WZAB', if_true: files('wzab_sysbus_tim1.o'))
+
