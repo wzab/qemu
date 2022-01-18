@@ -263,7 +263,11 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
             s->nof_bufs = val;
             break;
          // Access to the CTRL GPIO!
-        case DAQ1_CTRL:
+            //AXI_GPIO_ID_IND
+            //AXI_GPIO_CTRL_IND
+            //AXI_GPIO_CTRL_OUTD
+        case AXI_GPIO_CTRL_OUTD:
+            // Here we will handle actions associated with particular control bits
             if(val == DAQ1_CMD_STOP) {
                 //Stop the engine
                 s->running = 0;
