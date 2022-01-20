@@ -113,12 +113,10 @@ static void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
 typedef struct WzDaq1State {
     PCIDevice pdev;
     MemoryRegion mmio;
-    uint64_t regs[DAQ1_REGS_NUM];
     uint64_t write_ptr, read_ptr, ptr_mask;
     uint64_t hpage_size, hpage_mask;
     int hpage_shift;
     int nof_hp;
-    uint64_t buf_hps[DAQ1_NBUFS]; //Addresses of HPs creating the circular buffer
     uint64_t evt_write_ptr, evt_read_ptr, evt_ptr_mask;
     uint64_t evt_hp; //Address of HP keeping the event descriptors
     uint64_t evt_num; //Number of the event
@@ -129,6 +127,23 @@ typedef struct WzDaq1State {
     uint32_t irq_enabled;
     //QEMUTimer * daq_timer;
     QemuThread thread;
+    //State variables taken from the HLS implementation
+    //function readin:
+    int count; //reset to 1
+    int nr_word; //reset to 1
+    int bufleft; //reset to BUFLEN-1
+    //function prepare
+    int soverrun; //in fact 1-bit, reset to 0
+    uint32_t nr_buf; //reset to 0
+    uint32_t nr_sgm; //reset to 0
+    //State variables kept in GPIO
+    uint32_t gpio_ctrl_outd; //initialized to 0
+    uint32_t cur_buf; //initialized to 0
+    uint32_t cur_segm; //initialized to 0
+    //State variables kept in internal storage
+    uint64_t descs; //initilized to 0
+    uint64_t bufs[DAQ1_NBUFS]; //Addresses of HPs creating the circular buffer
+    
 } WzDaq1State;
 
 #define TYPE_PCI_WZDAQ1 "pci-wzdaq1"
@@ -268,10 +283,27 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
             //AXI_GPIO_CTRL_OUTD
         case AXI_GPIO_CTRL_OUTD:
             // Here we will handle actions associated with particular control bits
-            if(val == DAQ1_CMD_STOP) {
-                //Stop the engine
-                s->running = 0;
+            // Please note, that we should also handle changes...
+            if(val & (1 << 0)) {
+                // AP_START
+            } else {
+                
             }
+            if(val & (1 << 1)) {
+                // AP_nRST
+                //Reset the internal variables (as in the HLS code)
+                
+            } else {
+            }
+            if(val & (1 << 2)) {
+                // AP_SRC_START
+            } else {
+            }
+            if(val & (1 << 3)) {
+                // AP_IRQ_ENA
+            } else {
+            }
+
             if(val == DAQ1_CMD_START) {
                 int i;
                 uint64_t zero = 0;
