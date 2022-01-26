@@ -89,9 +89,12 @@
  */
 
 #define DEBUG_wzab1 1
-//PCI IDs below are not officially registered! Use only for experiments!
-#define PCI_VENDOR_ID_WZAB 0xabba
-#define PCI_DEVICE_ID_WZAB_WZDAQ1 0x3342
+// PCI IDs below are not officially registered! Use only for experiments!
+//#define PCI_VENDOR_ID_WZAB 0xabba
+//#define PCI_DEVICE_ID_WZAB_WZDAQ1 0x3342
+// New IDs used by HLS version
+#define PCI_VENDOR_ID_WZAB 0x32ab
+#define PCI_DEVICE_ID_WZAB_WZDAQ1 0x8018
 #include "qemu/osdep.h"
 #include <inttypes.h>
 #include "qemu/compiler.h"
@@ -109,9 +112,12 @@
 
 static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size);
 static void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size);
+static uint64_t pci_wzdaq1_dummy_read(void *opaque, hwaddr addr, unsigned size);
+static void pci_wzdaq1_dummy_write(void *opaque, hwaddr addr, uint64_t val, unsigned size);
 
 typedef struct WzDaq1State {
     PCIDevice pdev;
+    MemoryRegion mmio0;
     MemoryRegion mmio;
     uint64_t write_ptr, read_ptr, ptr_mask;
     uint64_t hpage_size, hpage_mask;
@@ -152,7 +158,7 @@ typedef struct WzDaq1State {
 
 #define TYPE_PCI_WZDAQ1 "pci-wzdaq1"
 
-#define PCI_WZDAQ1(obj) OBJECT_CHECK(WzDaq1State, obj, TYPE_PCI_WZDAQ1)
+#define PCI_WZDAQ1(obj) OBJECT_CHECK(WzDaq1State, (obj), TYPE_PCI_WZDAQ1)
 
 static Property wzab_daq1_properties[] = {
     DEFINE_PROP_UINT64("dsn", WzDaq1State, conf_dsn , INT64_MAX)
@@ -173,6 +179,38 @@ static const MemoryRegionOps pci_wzdaq1_mmio_ops = {
 };
 
 /*
+* Fake area - imitating the Xilinx PCIe bridge
+*/
+static const MemoryRegionOps pci_wzdaq1_mmio0_ops = {
+    .read = pci_wzdaq1_dummy_read,
+    .write = pci_wzdaq1_dummy_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .impl = {
+        .min_access_size = 8, //Always 64-bit access!!
+        .max_access_size = 8,
+    },
+    .valid = {
+        .min_access_size = 8, //Always 64-bit access!!
+        .max_access_size = 8,
+    },
+};
+
+static uint64_t pci_wzdaq1_dummy_read(void *opaque, hwaddr addr, unsigned size)
+{
+#ifdef DEBUG_wzab1
+    printf("XLX Memory read: address %" PRIx64 "\n", (uint64_t) addr);
+#endif
+   return 0x0bada4ea;
+}
+
+void pci_wzdaq1_dummy_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
+{
+#ifdef DEBUG_wzab1
+    printf("XLX Memory written: addres = %" PRIx64 ", val=%" PRIx64 "\n", (uint64_t) addr, (uint64_t) val);
+#endif
+   return;
+}
+/*
   static bool wzdaq1_msi_enabled(WzDaq1State * s)
   {
   return msi_enabled(&s->pdev);
@@ -181,8 +219,8 @@ static const MemoryRegionOps pci_wzdaq1_mmio_ops = {
 
 static void wzdaq1_reset (void * opaque)
 {
-    WzDaq1State *s = opaque;
-    memset(&s,0,sizeof(s));
+    //WzDaq1State *s = opaque;
+    //memset(&s,0,sizeof(s));
 #ifdef DEBUG_wzab1
     printf("wzdaq1 reset!\n");
 #endif
@@ -190,6 +228,9 @@ static void wzdaq1_reset (void * opaque)
 
 static void wzdaq1_soft_reset(WzDaq1State *s)
 {
+#ifdef DEBUG_wzab1
+    printf("wzdaq1 soft reset!\n");
+#endif
     //Copied from the HLS implementation
     s->nr_word = 0;
     s->bufleft = DAQ1_BUFLEN_IN_WORDS;
@@ -269,7 +310,6 @@ static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size)
         ret = s->bufs[(addr-DAQ1_BUFS)/8];
         return ret;
     }
-
     return ret;
 }
 
@@ -279,7 +319,7 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
     WzDaq1State *s = opaque;
 #ifdef DEBUG_wzab1
-    printf("wzab1: zapis pod adres = 0x%016" PRIx64 ", 0x%016" PRIx64 "\n", addr, val);
+    printf("Memory write: address = %" PRIx64 ", val = %" PRIx64 "\n", (uint64_t) addr, (uint64_t) val);
 #endif
     /* convert to wzdaq1 memory offset */
     //addr = (addr/8);
@@ -410,6 +450,9 @@ static void * receive_data_thread(void * arg)
     WzDaq1State * s = (WzDaq1State *) arg;
     zsock_t *pull = zsock_new_pair ("");
     zsock_bind(pull,"tcp://0.0.0.0:*[3000-]");
+#ifdef DEBUG_wzab1
+    printf("Receive thread started\n");
+#endif
     while(1) {
         zmsg_t * msg = zmsg_recv (pull);
         //The engine must be running
@@ -469,9 +512,12 @@ static void pci_wzdaq1_realize (PCIDevice *pdev, Error **errp)
 
     /* TODO: RST# value should be 0. */
     c[PCI_INTERRUPT_PIN] = 1;
+    memory_region_init_io(&s->mmio0,OBJECT(s),&pci_wzdaq1_mmio0_ops,s,
+                          "pci-wzdaq1-mmio0", 0x10000000);
+    pci_register_bar (&s->pdev, 0,  PCI_BASE_ADDRESS_SPACE_MEMORY | PCI_BASE_ADDRESS_MEM_TYPE_64, &s->mmio0);
     memory_region_init_io(&s->mmio,OBJECT(s),&pci_wzdaq1_mmio_ops,s,
-                          "pci-wzdaq1-mmio", 0x4000);
-    pci_register_bar (&s->pdev, 0,  PCI_BASE_ADDRESS_SPACE_MEMORY | PCI_BASE_ADDRESS_MEM_TYPE_64, &s->mmio);
+                          "pci-wzdaq1-mmio", 0x40000);
+    pci_register_bar (&s->pdev, 2,  PCI_BASE_ADDRESS_SPACE_MEMORY | PCI_BASE_ADDRESS_MEM_TYPE_64, &s->mmio);
     //Timer is not used, data are delivered by ZMQ!
     //s->daq_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, wzdaq1_tick, s);
     //Add the thread receiving the data
