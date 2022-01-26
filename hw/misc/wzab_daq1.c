@@ -169,11 +169,11 @@ static const MemoryRegionOps pci_wzdaq1_mmio_ops = {
     .write = pci_wzdaq1_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
     .impl = {
-        .min_access_size = 8, //Always 64-bit access!!
+        .min_access_size = 4, //32-bit or 64-bit access!!
         .max_access_size = 8,
     },
     .valid = {
-        .min_access_size = 8, //Always 64-bit access!!
+        .min_access_size = 4, //32-bit or 64-bit access!!
         .max_access_size = 8,
     },
 };
@@ -186,11 +186,11 @@ static const MemoryRegionOps pci_wzdaq1_mmio0_ops = {
     .write = pci_wzdaq1_dummy_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
     .impl = {
-        .min_access_size = 8, //Always 64-bit access!!
+        .min_access_size = 4, //32-bit or 64-bit access!!
         .max_access_size = 8,
     },
     .valid = {
-        .min_access_size = 8, //Always 64-bit access!!
+        .min_access_size = 4, //32-bit or 64-bit access!!
         .max_access_size = 8,
     },
 };
@@ -305,6 +305,18 @@ static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size)
 #endif
         return ret;
     }
+    if(addr==AXI_GPIO_CTRL_OUTD) {
+        ret = s->gpio_ctrl_outd;
+        return ret;
+    }
+    if(addr==AXI_GPIO_CTRL_IND) {
+        ret = 0;
+        if(s->soverrun) 
+          ret |= (1 << GPIO_IND_BIT_OVERRUN);
+        if(s->cur_segm != s-> nr_sgm)
+          ret |= (1 << GPIO_IND_BIT_SGMAV);        
+        return ret;
+    }
     if (( addr >= DAQ1_BUFS ) && ( addr <= DAQ1_BUFS_HIGH )) {
         // Write the hugepage address to the buffer
         ret = s->bufs[(addr-DAQ1_BUFS)/8];
@@ -350,6 +362,7 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
         //AXI_GPIO_CTRL_IND
         //AXI_GPIO_CTRL_OUTD
     case AXI_GPIO_CTRL_OUTD:
+        s->gpio_ctrl_outd = val;
         // Here we will handle actions associated with particular control bits
         // Please note, that we should also handle changes...
         if(val & (1 << 0)) {
@@ -360,6 +373,7 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
         }
         if(val & (1 << 1)) {
             // AP_nRST
+        } else {
             //Reset the internal variables (as in the HLS code)
             wzdaq1_soft_reset(s);
             check_irq(s);
