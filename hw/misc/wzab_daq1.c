@@ -169,13 +169,13 @@ static const MemoryRegionOps pci_wzdaq1_mmio_ops = {
     .write = pci_wzdaq1_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
     .impl = {
-        .min_access_size = 4, //32-bit or 64-bit access!!
-        .max_access_size = 8,
+        .min_access_size = 4, //32-bit access!!
+        .max_access_size = 4,
     },
     .valid = {
-        .min_access_size = 4, //32-bit or 64-bit access!!
-        .max_access_size = 8,
-    },
+        .min_access_size = 4, //32-bit access!!
+        .max_access_size = 4,
+    },   
 };
 
 /*
@@ -185,13 +185,13 @@ static const MemoryRegionOps pci_wzdaq1_mmio0_ops = {
     .read = pci_wzdaq1_dummy_read,
     .write = pci_wzdaq1_dummy_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
-    .impl = {
-        .min_access_size = 4, //32-bit or 64-bit access!!
-        .max_access_size = 8,
+  .impl = {
+        .min_access_size = 4, //32-bit access!!
+        .max_access_size = 4,
     },
     .valid = {
-        .min_access_size = 4, //32-bit or 64-bit access!!
-        .max_access_size = 8,
+        .min_access_size = 4, //32-bit access!!
+        .max_access_size = 4,
     },
 };
 
@@ -217,14 +217,6 @@ void pci_wzdaq1_dummy_write(void *opaque, hwaddr addr, uint64_t val, unsigned si
   }
 */
 
-static void wzdaq1_reset (void * opaque)
-{
-    //WzDaq1State *s = opaque;
-    //memset(&s,0,sizeof(s));
-#ifdef DEBUG_wzab1
-    printf("wzdaq1 reset!\n");
-#endif
-}
 
 static void wzdaq1_soft_reset(WzDaq1State *s)
 {
@@ -237,6 +229,17 @@ static void wzdaq1_soft_reset(WzDaq1State *s)
     s->soverrun = 0;
     s->nr_buf = 0;
     s->nr_sgm = 0;
+    s->irq_enabled = 0;
+}
+
+static void wzdaq1_reset (void * opaque)
+{
+    WzDaq1State *s = opaque;
+    //memset(&s,0,sizeof(s));
+    wzdaq1_soft_reset(s);
+#ifdef DEBUG_wzab1
+    printf("wzdaq1 reset!\n");
+#endif
 }
 
 static inline void check_irq(WzDaq1State *s)
@@ -264,7 +267,14 @@ static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size)
     //addr = addr/8;
     //Special cases
     if(addr==DAQ1_DESCS) {
-        ret = s->descs;
+        ret = s->descs & 0xffffffff;
+#ifdef DEBUG_wzab1
+        printf(" value %"PRIx64"\n",ret);
+#endif
+        return ret;
+    }
+    if(addr==DAQ1_DESCS + 4) {
+        ret = (s->descs >> 32) & 0xffffffff;
 #ifdef DEBUG_wzab1
         printf(" value %"PRIx64"\n",ret);
 #endif
@@ -318,8 +328,13 @@ static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size)
         return ret;
     }
     if (( addr >= DAQ1_BUFS ) && ( addr <= DAQ1_BUFS_HIGH )) {
-        // Write the hugepage address to the buffer
         ret = s->bufs[(addr-DAQ1_BUFS)/8];
+        // Write the hugepage address to the buffer
+        if(addr & 4) {
+           //Upper 4 bytes
+           ret >>= 32;
+        }
+        ret &= 0xffffffff;
         return ret;
     }
     return ret;
@@ -337,7 +352,10 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
     //addr = (addr/8);
     switch(addr) {
     case DAQ1_DESCS:
-        s->descs = val;
+        s->descs = (s->descs & 0xffffffff00000000LL) | (val & 0xffffffff);
+        break;
+    case DAQ1_DESCS+4:
+        s->descs = (s->descs & 0xffffffff) | ((val & 0xffffffff) << 32);
         break;
     case DAQ1_CUR_SEGM:
         s->cur_segm = val;
@@ -376,13 +394,27 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
         } else {
             //Reset the internal variables (as in the HLS code)
             wzdaq1_soft_reset(s);
-            check_irq(s);
         }
         if(val & (1 << 2)) {
             // AP_SRC_START
         }
+        if(val & (1 << 3)) {
+            // AP_IRQ_enable
+            s->irq_enabled = 1;
+        } else { 
+            s->irq_enabled = 0;
+        }
+        check_irq(s);
     }
     if (( addr >= DAQ1_BUFS ) && ( addr <= DAQ1_BUFS_HIGH )) {
+        uint64_t tmp = s->bufs[(addr-DAQ1_BUFS)/8];
+	if(addr & 4) {
+	   // Upper 32 bits
+	   s->bufs[(addr-DAQ1_BUFS)/8] = (tmp & 0xffffffff) | ((val & 0xffffffff) << 32);
+	} else {
+	   // Lower 32 bits
+	   s->bufs[(addr-DAQ1_BUFS)/8] = (tmp & 0xffffffff00000000LL) | (val & 0xffffffff);
+	}
         // Write the hugepage address to the buffer
         s->bufs[(addr-DAQ1_BUFS)/8] = val;
     }
@@ -454,6 +486,7 @@ static int add_words(WzDaq1State * s, void * wbuf, int nwords)
                 s->nr_word = 0;
             }
         }
+        nwords -= to_write;
     }
     return 0;
 }
@@ -470,6 +503,7 @@ static void * receive_data_thread(void * arg)
     while(1) {
         zmsg_t * msg = zmsg_recv (pull);
         //The engine must be running
+        printf("Received frame\n");
         if(s->running) {
             //This must be a single frame message!
             if(zmsg_size(msg) != 1) {

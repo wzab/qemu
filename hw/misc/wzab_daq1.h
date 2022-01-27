@@ -14,7 +14,7 @@
 #define AXI_GPIO_SGM 0x20000
 #define AXI_HLS  0x30000
 //Length of the area that should be mmapped for debugging
-#define AXI_MMAP_LEN 0x20000
+#define AXI_MMAP_LEN 0x40000
 
 //https://www.xilinx.com/support/documentation/ip_documentation/axi_gpio/v2_0/pg144-axi-gpio.pdf
 
