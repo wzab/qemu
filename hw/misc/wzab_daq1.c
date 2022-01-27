@@ -141,6 +141,7 @@ typedef struct WzDaq1State {
     //int count; //reset to 1 in HLS - not needed here, because we do not emulate bursts
     int nr_word; //reset to 1 in HLS - here to 0
     int bufleft; //reset to BUFLEN-1 - here to BUFLEN
+    uint64_t after; //reset to 0
     //function prepare
     int soverrun; //in fact 1-bit, reset to 0
     uint32_t nr_buf; //reset to 0
@@ -230,6 +231,7 @@ static void wzdaq1_soft_reset(WzDaq1State *s)
     s->nr_buf = 0;
     s->nr_sgm = 0;
     s->irq_enabled = 0;
+    s->after = 0;
 }
 
 static void wzdaq1_reset (void * opaque)
@@ -453,8 +455,10 @@ static int change_segment(WzDaq1State * s)
         memset(desc,0,32);
         uint64_t after = s->nr_buf * DAQ1_BUFLEN_IN_WORDS + s->nr_word;
         * (uint64_t *) desc = htole64(after);
+        * (uint64_t *) (desc + 8) = htole64(s->after);
         pci_dma_write(&s->pdev,s->descs + 32*s->cur_segm,&desc,sizeof(desc));
-        s->cur_segm = new_nr_sgm;
+        s->nr_sgm = new_nr_sgm;
+        s->after = after;
     }
     return 0;
 }
