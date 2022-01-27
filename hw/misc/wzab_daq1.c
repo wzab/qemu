@@ -331,7 +331,7 @@ static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size)
     }
     if (( addr >= DAQ1_BUFS ) && ( addr <= DAQ1_BUFS_HIGH )) {
         ret = s->bufs[(addr-DAQ1_BUFS)/8];
-        // Write the hugepage address to the buffer
+        // Read the hugepage address from the buffer
         if(addr & 4) {
            //Upper 4 bytes
            ret >>= 32;
@@ -409,6 +409,7 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
         check_irq(s);
     }
     if (( addr >= DAQ1_BUFS ) && ( addr <= DAQ1_BUFS_HIGH )) {
+        // Write the hugepage address to the buffer
         uint64_t tmp = s->bufs[(addr-DAQ1_BUFS)/8];
 	if(addr & 4) {
 	   // Upper 32 bits
@@ -417,8 +418,6 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 	   // Lower 32 bits
 	   s->bufs[(addr-DAQ1_BUFS)/8] = (tmp & 0xffffffff00000000LL) | (val & 0xffffffff);
 	}
-        // Write the hugepage address to the buffer
-        s->bufs[(addr-DAQ1_BUFS)/8] = val;
     }
 }
 
@@ -456,7 +455,7 @@ static int change_segment(WzDaq1State * s)
         uint64_t after = s->nr_buf * DAQ1_BUFLEN_IN_WORDS + s->nr_word;
         * (uint64_t *) desc = htole64(after);
         * (uint64_t *) (desc + 8) = htole64(s->after);
-        pci_dma_write(&s->pdev,s->descs + 32*s->cur_segm,&desc,sizeof(desc));
+        pci_dma_write(&s->pdev,s->descs + 32*s->nr_sgm,&desc,sizeof(desc));
         s->nr_sgm = new_nr_sgm;
         s->after = after;
     }
@@ -472,7 +471,7 @@ static int add_words(WzDaq1State * s, void * wbuf, int nwords)
     while(nwords > 0) {
         int to_write = nwords; //number of words to be written
         if (to_write > s->bufleft) to_write = s->bufleft;
-        pci_dma_write(&s->pdev,s->bufs[s->nr_buf]+32*s->nr_word,wbuf,to_write);
+        pci_dma_write(&s->pdev,s->bufs[s->nr_buf]+32*s->nr_word,wbuf,to_write*32);
         s->nr_word += to_write;
         s->bufleft -= to_write;
         if(s->bufleft == 0) {
@@ -490,6 +489,7 @@ static int add_words(WzDaq1State * s, void * wbuf, int nwords)
                 s->nr_word = 0;
             }
         }
+        wbuf += to_write*32;
         nwords -= to_write;
     }
     return 0;
