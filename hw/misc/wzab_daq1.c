@@ -317,16 +317,16 @@ static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size)
 #endif
         return ret;
     }
-    if(addr==AXI_GPIO_CTRL_OUTD) {
+    if(addr==AXI_CTRL_OUTD) {
         ret = s->gpio_ctrl_outd;
         return ret;
     }
-    if(addr==AXI_GPIO_CTRL_IND) {
+    if(addr==AXI_CTRL_IND) {
         ret = 0;
         if(s->soverrun) 
-          ret |= (1 << GPIO_IND_BIT_OVERRUN);
+          ret |= (1 << CTRL_IND_BIT_OVERRUN);
         if(s->cur_segm != s-> nr_sgm)
-          ret |= (1 << GPIO_IND_BIT_SGMAV);        
+          ret |= (1 << CTRL_IND_BIT_SGMAV);        
         return ret;
     }
     if (( addr >= DAQ1_BUFS ) && ( addr <= DAQ1_BUFS_HIGH )) {
@@ -381,7 +381,7 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
         //AXI_GPIO_ID_IND
         //AXI_GPIO_CTRL_IND
         //AXI_GPIO_CTRL_OUTD
-    case AXI_GPIO_CTRL_OUTD:
+    case AXI_CTRL_OUTD:
         s->gpio_ctrl_outd = val;
         // Here we will handle actions associated with particular control bits
         // Please note, that we should also handle changes...
@@ -453,8 +453,8 @@ static int change_segment(WzDaq1State * s)
         uint8_t desc[32];
         memset(desc,0,32);
         uint64_t after = s->nr_buf * DAQ1_BUFLEN_IN_WORDS + s->nr_word;
-        * (uint64_t *) desc = htole64(after);
-        * (uint64_t *) (desc + 8) = htole64(s->after);
+        * (uint64_t *) (desc + 8) = htole64(after);
+        * (uint64_t *) (desc + 0) = htole64(s->after);
         pci_dma_write(&s->pdev,s->descs + 32*s->nr_sgm,&desc,sizeof(desc));
         s->nr_sgm = new_nr_sgm;
         s->after = after;

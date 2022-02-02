@@ -31,6 +31,13 @@ I have called in "build" directory the following command:
 
 after the configure is done.
 
+For newest gcc (10 and 11) I had to disable certain warnings from being
+promoted to errors. The brute-force solution is to do:
+
+CFLAGS=-Wno-error ./configure --target-list=x86_64-softmmu,arm-softmmu,aarch64-softmmu
+
+when configuring.
+
 
 
 

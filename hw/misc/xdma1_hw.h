@@ -15,14 +15,6 @@
 // 0x200c : Data signal of nof_bufs_V
 //          bit 31~0 - nof_bufs_V[31:0] (Read/Write)
 // 0x2010 : reserved
-// 0x2014 : Data signal of cur_buf_V
-//          bit 31~0 - cur_buf_V[31:0] (Read/Write)
-// 0x2018 : reserved
-// 0x201c : Data signal of nr_buf_V
-//          bit 31~0 - nr_buf_V[31:0] (Read)
-// 0x2020 : Control signal of nr_buf_V
-//          bit 0  - nr_buf_V_ap_vld (Read/COR)
-//          others - reserved
 // 0x1000 ~
 // 0x1fff : Memory 'bufs_V' (512 * 64b)
 //          Word 2n   : bit [31:0] - bufs_V[n][31: 0]
@@ -33,11 +25,6 @@
 #define XDMA1_CONTROL_BITS_DESCS_V_DATA    64
 #define XDMA1_CONTROL_ADDR_NOF_BUFS_V_DATA 0x200c
 #define XDMA1_CONTROL_BITS_NOF_BUFS_V_DATA 32
-#define XDMA1_CONTROL_ADDR_CUR_BUF_V_DATA  0x2014
-#define XDMA1_CONTROL_BITS_CUR_BUF_V_DATA  32
-#define XDMA1_CONTROL_ADDR_NR_BUF_V_DATA   0x201c
-#define XDMA1_CONTROL_BITS_NR_BUF_V_DATA   32
-#define XDMA1_CONTROL_ADDR_NR_BUF_V_CTRL   0x2020
 #define XDMA1_CONTROL_ADDR_BUFS_V_BASE     0x1000
 #define XDMA1_CONTROL_ADDR_BUFS_V_HIGH     0x1fff
 #define XDMA1_CONTROL_WIDTH_BUFS_V         64
