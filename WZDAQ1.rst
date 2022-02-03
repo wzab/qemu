@@ -12,14 +12,15 @@ of the Linux driver, and of the data receiving application.
 The concentrated data are delivered as records,
 delivered via ZMQ protocol.
 
-In the first version, the structure is as follows:
+In the current version, the emulated DMA core works with 256-bit (32 byte) words.
+They should be organized as follows:
 
-- "WZDAQ1-E" Start of the new dataset
-
-- "WZDAQ1-D" Data chunk for the dataset, must be followed by the number of
-   64-bit data words belonging to that chunk.
-   
-   After that the data must follow.
+- "WZDAQ1-D" (followed with 24 0x00 bytes which are ignored).
+  Start of a part of a segment of data.   
+  After that the data must follow.
+- "WZDAQ1-T" (followed with 24 0x00 bytes which are ignored).
+  The final part of a segment of data.   
+  After that the data must follow.
 
 The compilation has been tested for targets:
 ./configure --target-list=x86_64-softmmu,arm-softmmu,aarch64-softmmu
