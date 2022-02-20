@@ -114,11 +114,14 @@ static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size);
 static void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size);
 static uint64_t pci_wzdaq1_dummy_read(void *opaque, hwaddr addr, unsigned size);
 static void pci_wzdaq1_dummy_write(void *opaque, hwaddr addr, uint64_t val, unsigned size);
+static uint64_t pci_wzdaq1_agwb_read(void *opaque, hwaddr addr, unsigned size);
+static void pci_wzdaq1_agwb_write(void *opaque, hwaddr addr, uint64_t val, unsigned size);
 
 typedef struct WzDaq1State {
     PCIDevice pdev;
     MemoryRegion mmio0;
     MemoryRegion mmio;
+    MemoryRegion mmio2;
     uint64_t write_ptr, read_ptr, ptr_mask;
     uint64_t hpage_size, hpage_mask;
     int hpage_shift;
@@ -165,6 +168,10 @@ static Property wzab_daq1_properties[] = {
     DEFINE_PROP_UINT64("dsn", WzDaq1State, conf_dsn , INT64_MAX)
 };
 
+/*
+ * Area used to control the DMA HLS core
+ */
+
 static const MemoryRegionOps pci_wzdaq1_mmio_ops = {
     .read = pci_wzdaq1_read,
     .write = pci_wzdaq1_write,
@@ -208,6 +215,40 @@ void pci_wzdaq1_dummy_write(void *opaque, hwaddr addr, uint64_t val, unsigned si
 {
 #ifdef DEBUG_wzab1
     printf("XLX Memory written: addres = %" PRIx64 ", val=%" PRIx64 "\n", (uint64_t) addr, (uint64_t) val);
+#endif
+   return;
+}
+
+/*
+* Area imitating the AGWB-managed addresses
+*/
+
+static const MemoryRegionOps pci_wzdaq1_mmio2_ops = {
+    .read = pci_wzdaq1_agwb_read,
+    .write = pci_wzdaq1_agwb_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+  .impl = {
+        .min_access_size = 4, //32-bit access!!
+        .max_access_size = 4,
+    },
+    .valid = {
+        .min_access_size = 4, //32-bit access!!
+        .max_access_size = 4,
+    },
+};
+
+static uint64_t pci_wzdaq1_agwb_read(void *opaque, hwaddr addr, unsigned size)
+{
+#ifdef DEBUG_wzab1
+    printf("AGWB read: address %" PRIx64 "\n", (uint64_t) addr);
+#endif
+   return 0x0a93b900d;
+}
+
+void pci_wzdaq1_agwb_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
+{
+#ifdef DEBUG_wzab1
+    printf("AGWB written: addres = %" PRIx64 ", val=%" PRIx64 "\n", (uint64_t) addr, (uint64_t) val);
 #endif
    return;
 }
@@ -570,6 +611,9 @@ static void pci_wzdaq1_realize (PCIDevice *pdev, Error **errp)
     memory_region_init_io(&s->mmio,OBJECT(s),&pci_wzdaq1_mmio_ops,s,
                           "pci-wzdaq1-mmio", 0x40000);
     pci_register_bar (&s->pdev, 2,  PCI_BASE_ADDRESS_SPACE_MEMORY | PCI_BASE_ADDRESS_MEM_TYPE_64, &s->mmio);
+    memory_region_init_io(&s->mmio2,OBJECT(s),&pci_wzdaq1_mmio2_ops,s,
+                          "pci-wzdaq1-agwb", 0x8000000);
+    pci_register_bar (&s->pdev, 4,  PCI_BASE_ADDRESS_SPACE_MEMORY | PCI_BASE_ADDRESS_MEM_TYPE_64, &s->mmio2);
     //Timer is not used, data are delivered by ZMQ!
     //s->daq_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, wzdaq1_tick, s);
     //Add the thread receiving the data
