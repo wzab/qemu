@@ -286,6 +286,8 @@ static void pci_wztim1_class_init(ObjectClass *klass, void *data)
     k->exit = pci_wztim1_uninit;
     k->vendor_id = PCI_VENDOR_ID_WZAB;
     k->device_id = PCI_DEVICE_ID_WZAB_WZTIM1;
+    k->revision = 0x00;
+    k->class_id = PCI_CLASS_OTHERS;
     dc->desc = "PCI demo TIMER";
     set_bit(DEVICE_CATEGORY_MISC, dc->categories);
     dc->reset = pci_wztim1_reset;
