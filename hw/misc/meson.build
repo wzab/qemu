@@ -124,3 +124,10 @@ specific_ss.add(when: 'CONFIG_MIPS_CPS', if_true: files('mips_cmgcr.c', 'mips_cp
 specific_ss.add(when: 'CONFIG_MIPS_ITU', if_true: files('mips_itu.c'))
 
 specific_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
+
+#WZab added devices
+
+softmmu_ss.add(when: 'CONFIG_WZAB_PCI', if_true: files('wzab_daq1.c'))
+libczmq = cc.find_library('czmq', required: true)
+softmmu_ss.add(declare_dependency(dependencies: libczmq))
+

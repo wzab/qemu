@@ -5,6 +5,7 @@ config ARM_VIRT
     imply VFIO_AMD_XGBE
     imply VFIO_PLATFORM
     imply VFIO_XGMAC
+    imply WZAB_PCI
     imply TPM_TIS_SYSBUS
     imply NVDIMM
     select ARM_GIC
