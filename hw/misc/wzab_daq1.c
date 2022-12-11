@@ -148,11 +148,12 @@ typedef struct WzDaq1State {
     //function prepare
     int soverrun; //in fact 1-bit, reset to 0
     uint32_t nr_buf; //reset to 0
-    uint32_t nr_sgm; //reset to 0
+    uint32_t nr_pkt; //reset to 0
     //State variables kept in GPIO
     uint32_t gpio_ctrl_outd; //initialized to 0
     uint32_t cur_buf; //initialized to 0
-    uint32_t cur_segm; //initialized to 0
+    uint32_t cur_pkt; //initialized to 0
+    uint32_t srv_pkt; //initialized to 0
     //State variables kept in internal storage
     uint64_t descs; //initialized to 0
     uint64_t bufs[DAQ1_MAX_NOF_BUFS]; //Addresses of HPs creating the circular buffer
@@ -270,7 +271,7 @@ static void wzdaq1_soft_reset(WzDaq1State *s)
     s->bufleft = DAQ1_BUFLEN_IN_WORDS;
     s->soverrun = 0;
     s->nr_buf = 0;
-    s->nr_sgm = 0;
+    s->nr_pkt = 0;
     s->irq_enabled = 0;
     s->after = 0;
 }
@@ -291,7 +292,7 @@ static inline void check_irq(WzDaq1State *s)
         pci_irq_deassert(&s->pdev);
     } else {
         if((s->soverrun) ||
-           (s->cur_segm != s->nr_sgm)) {
+           (s->srv_pkt != s->nr_pkt)) {
             pci_irq_assert(&s->pdev);
         } else {
         pci_irq_deassert(&s->pdev);
@@ -309,6 +310,10 @@ static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size)
     uint64_t ret=0xbada4ea55aa55aa; //Special value returned when accessed non-existing register
     //addr = addr/8;
     //Special cases
+    if(addr==AXI_ID_IND) {
+        ret = AXI_ID_VAL+1;
+        return ret;
+    }
     if(addr==DAQ1_DESCS) {
         ret = s->descs & 0xffffffff;
 #ifdef DEBUG_wzab1
@@ -323,15 +328,22 @@ static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size)
 #endif
         return ret;
     }
-    if(addr==DAQ1_CUR_SEGM) {
-        ret = s->cur_segm;
+    if(addr==DAQ1_CUR_PKT) {
+        ret = s->cur_pkt;
 #ifdef DEBUG_wzab1
         printf(" value %"PRIx64"\n",ret);
 #endif
         return ret;
     }
-    if(addr==DAQ1_NR_SEGM) {
-        ret = s->nr_sgm;
+    if(addr==DAQ1_SRV_PKT) {
+        ret = s->srv_pkt;
+#ifdef DEBUG_wzab1
+        printf(" value %"PRIx64"\n",ret);
+#endif
+        return ret;
+    }
+    if(addr==DAQ1_NR_PKT) {
+        ret = s->nr_pkt;
 #ifdef DEBUG_wzab1
         printf(" value %"PRIx64"\n",ret);
 #endif
@@ -366,8 +378,8 @@ static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size)
         ret = 0;
         if(s->soverrun) 
           ret |= (1 << CTRL_IND_BIT_OVERRUN);
-        if(s->cur_segm != s-> nr_sgm)
-          ret |= (1 << CTRL_IND_BIT_SGMAV);        
+        if(s->srv_pkt != s-> nr_pkt)
+          ret |= (1 << CTRL_IND_BIT_PKTAV);        
         return ret;
     }
     if (( addr >= DAQ1_BUFS ) && ( addr <= DAQ1_BUFS_HIGH )) {
@@ -400,13 +412,16 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
     case DAQ1_DESCS+4:
         s->descs = (s->descs & 0xffffffff) | ((val & 0xffffffff) << 32);
         break;
-    case DAQ1_CUR_SEGM:
-        s->cur_segm = val;
+    case DAQ1_SRV_PKT:
+        s->srv_pkt = val;
         check_irq(s);
         break;
-    case DAQ1_NR_SEGM:
+    case DAQ1_CUR_PKT:
+        s->cur_pkt = val;
+        break;
+    case DAQ1_NR_PKT:
         //That's read-only register
-        //s->nr_segm = val;
+        //s->nr_pkt = val;
         break;
     case DAQ1_CUR_BUF:
         s->cur_buf = val;
@@ -462,7 +477,7 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
     }
 }
 
-/* The procedure changes the data segment.
+/* The procedure changes the data packet.
  * Currently we write only the address of the last word
  * in the circular buffer.
  *
@@ -476,28 +491,28 @@ void pci_wzdaq1_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
  * I could encode the state of the event in the least significant bit of the
  * write pointer. 0 - the event is being written, 1 - the event is completed.
  *
- * So now I simply call start_segment immediately after end_segment...
+ * So now I simply call start_packet immediately after end_packet...
  */
 
-static int change_segment(WzDaq1State * s)
+static int change_packet(WzDaq1State * s)
 {
     if(s->soverrun) return -1;
-    int new_nr_sgm = s->nr_sgm + 1;
-    if(new_nr_sgm == DAQ1_NUM_EVT_DESCS)
-        new_nr_sgm = 0;
-    if(new_nr_sgm == s->cur_segm) {
+    int new_nr_pkt = s->nr_pkt + 1;
+    if(new_nr_pkt == DAQ1_NUM_EVT_DESCS)
+        new_nr_pkt = 0;
+    if(new_nr_pkt == s->cur_pkt) {
         s->soverrun = 1;        
         return -2;
     } else {
-        //Write the position of the first word in the next segment
+        //Write the position of the first word in the next packet
         //to the descriptor
         uint8_t desc[32];
         memset(desc,0,32);
         uint64_t after = s->nr_buf * DAQ1_BUFLEN_IN_WORDS + s->nr_word;
         * (uint64_t *) (desc + 8) = htole64(after);
         * (uint64_t *) (desc + 0) = htole64(s->after);
-        pci_dma_write(&s->pdev,s->descs + 32*s->nr_sgm,&desc,sizeof(desc));
-        s->nr_sgm = new_nr_sgm;
+        pci_dma_write(&s->pdev,s->descs + 32*s->nr_pkt,&desc,sizeof(desc));
+        s->nr_pkt = new_nr_pkt;
         s->after = after;
     }
     return 0;
@@ -576,9 +591,9 @@ static void * receive_data_thread(void * arg)
                         //Add the words to the circular buffer and update
                         //s->nr_word
                         add_words(s,ptr+32,nwords);                            
-                        //If TLAST was set, change the segment
+                        //If TLAST was set, change the packet
                         if (is_t) {
-                            change_segment(s);
+                            change_packet(s);
                         }
                         //Update the IRQ status
                         check_irq(s);

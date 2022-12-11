@@ -18,9 +18,11 @@
 
 // Access to the GPIO with core ID
 #define AXI_ID_IND (AXI_REGS + 0x0)
+// Expected ID value
+#define AXI_ID_VAL 0x32abd3a2
 
 // Access to the Control GPIO OUTPUT ports
-#define AXI_CTRL_OUTD (AXI_REGS + 4 * 0x3)
+#define AXI_CTRL_OUTD (AXI_REGS + 4 * 0x4)
 // Assignment of bits:
 // 0 - ap_start
 // 1 - run (in DMA core)
@@ -32,40 +34,43 @@
 #define CTRL_OUTD_BIT_IRQ_ENA 3
 
 // Access to the Control GPIO INPUT ports
-#define AXI_CTRL_IND (AXI_REGS + 4 * 0x6)
+#define AXI_CTRL_IND (AXI_REGS + 4 * 0x7)
 //Assignment of bits
 // 0 - ap_done
 // 1 - ap_ready
 // 2 - ap_idle
 // 3 - overrun
-// 4 - sgm_av
+// 4 - pkt_av
 #define CTRL_IND_BIT_DONE 0
 #define CTRL_IND_BIT_READY 1
 #define CTRL_IND_BIT_IDLE 2
 #define CTRL_IND_BIT_OVERRUN 3
-#define CTRL_IND_BIT_SGMAV 4
+#define CTRL_IND_BIT_PKTAV 4
 
-// Access to the GPIOs with the segment numbers
-#define AXI_REGS_SGM_CUR (AXI_REGS + 4 * 0x1)
-#define AXI_REGS_SGM_NR (AXI_REGS + 4 * 0x4)
+// Access to the GPIOs with the packet numbers
+#define AXI_REGS_PKT_CUR (AXI_REGS + 4 * 0x1)
+#define AXI_REGS_PKT_SRV (AXI_REGS + 4 * 0x3)
+#define AXI_REGS_PKT_NR (AXI_REGS + 4 * 0x5)
 
 // Access to the GPIOs with the buffers numbers
 #define AXI_REGS_BUF_CUR (AXI_REGS + 4 * 0x2)
-#define AXI_REGS_BUF_NR (AXI_REGS + 4 * 0x5)
+#define AXI_REGS_BUF_NR (AXI_REGS + 4 * 0x6)
 
 // Access to the HLS-defined part
 #include "xdma1_hw.h"
 
 //Address of the huge page with descriptors of events
 #define DAQ1_DESCS	(AXI_HLS + XDMA1_CONTROL_ADDR_DESCS_V_DATA)
-//Address of the register with the number of the first not handled segment
-#define DAQ1_CUR_SEGM   (AXI_REGS_SGM_CUR)
-//Address of the register with the number of the currently filled segment
-#define DAQ1_NR_SEGM   (AXI_REGS_SGM_NR)
+//Address of the register with the number of the first not handled packet
+#define DAQ1_CUR_PKT   (AXI_REGS_PKT_CUR)
+//Address of the register with the number of the first not scheduled for handling packet
+#define DAQ1_SRV_PKT   (AXI_REGS_PKT_SRV)
+//Address of the register with the number of the currently filled packet
+#define DAQ1_NR_PKT   (AXI_REGS_PKT_NR)
 
 //Address of the register with the number of the first not handled buffer
 #define DAQ1_CUR_BUF   (AXI_REGS_BUF_CUR)
-//Address of the register with the number of the currently filled segment
+//Address of the register with the number of the currently filled buffer
 #define DAQ1_NR_BUF   (AXI_REGS_BUF_NR)
 
 //Address of the register with the number of the buffers
