@@ -311,7 +311,7 @@ static uint64_t pci_wzdaq1_read(void *opaque, hwaddr addr, unsigned size)
     //addr = addr/8;
     //Special cases
     if(addr==AXI_ID_IND) {
-        ret = AXI_ID_VAL+1;
+        ret = AXI_ID_VAL;
         return ret;
     }
     if(addr==DAQ1_DESCS) {
