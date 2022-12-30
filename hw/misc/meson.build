@@ -128,6 +128,8 @@ specific_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
 #WZab added devices
 
 softmmu_ss.add(when: 'CONFIG_WZAB_PCI', if_true: files('wzab_daq1.c'))
+softmmu_ss.add(when: 'CONFIG_WZAB', if_true: files('wzab_daq1_sysbus.c'))
+
 libczmq = cc.find_library('czmq', required: true)
 softmmu_ss.add(declare_dependency(dependencies: libczmq))
 

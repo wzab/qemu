@@ -38,6 +38,9 @@ config WZAB_PCI
     bool
     depends on PCI
 
+config WZAB
+    bool
+
 config PCA9552
     bool
     depends on I2C
