@@ -596,7 +596,9 @@ static void * receive_data_thread(void * arg)
                             change_packet(s);
                         }
                         //Update the IRQ status
+                        qemu_mutex_lock_iothread();
                         check_irq(s);
+                        qemu_mutex_unlock_iothread();
                     } else if (is_q) {
                         printf("End of run!\n");
                         break;
