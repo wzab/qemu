@@ -3,7 +3,8 @@ QEMU wzdaq-hls BRANCH README
 ============================
 
 This is a special version of the QEMU emulator supplemented with
-a C model of the HLS-implemented DMA engine for HEP DAQ Systems.
+a C model of the PCIe-connected HLS-implemented DMA engine
+for HEP DAQ Systems.
 
 ===========
 QEMU README
