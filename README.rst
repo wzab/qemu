@@ -1,3 +1,11 @@
+===================================
+QEMU wzdaq-hls-sysbus BRANCH README
+===================================
+
+This is a special version of the QEMU emulator supplemented with
+a C model of the SYSBUS-connected HLS-implemented DMA engine
+for HEP DAQ Systems.
+
 ===========
 QEMU README
 ===========
