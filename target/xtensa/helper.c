@@ -26,9 +26,10 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/log.h"
 #include "cpu.h"
 #include "exec/exec-all.h"
-#include "exec/gdbstub.h"
+#include "gdbstub/helpers.h"
 #include "exec/helper-proto.h"
 #include "qemu/error-report.h"
 #include "qemu/qemu-print.h"
@@ -230,15 +231,18 @@ void xtensa_breakpoint_handler(CPUState *cs)
             }
             cpu_loop_exit_noexc(cs);
         }
-    }
-}
-
-void xtensa_cpu_list(void)
-{
-    XtensaConfigList *core = xtensa_cores;
-    qemu_printf("Available CPUs:\n");
-    for (; core; core = core->next) {
-        qemu_printf("  %s\n", core->config->name);
+    } else {
+        if (cpu_breakpoint_test(cs, env->pc, BP_GDB)
+            || !cpu_breakpoint_test(cs, env->pc, BP_CPU)) {
+            return;
+        }
+        if (env->sregs[ICOUNT] == 0xffffffff &&
+            xtensa_get_cintlevel(env) < env->sregs[ICOUNTLEVEL]) {
+            debug_exception_env(env, DEBUGCAUSE_IC);
+        } else {
+            debug_exception_env(env, DEBUGCAUSE_IB);
+        }
+        cpu_loop_exit_noexc(cs);
     }
 }
 
@@ -252,7 +256,7 @@ void xtensa_cpu_do_unaligned_access(CPUState *cs,
 
     assert(xtensa_option_enabled(env->config,
                                  XTENSA_OPTION_UNALIGNED_EXCEPTION));
-    cpu_restore_state(CPU(cpu), retaddr, true);
+    cpu_restore_state(CPU(cpu), retaddr);
     HELPER(exception_cause_vaddr)(env,
                                   env->pc, LOAD_STORE_ALIGNMENT_CAUSE,
                                   addr);
@@ -283,7 +287,7 @@ bool xtensa_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
     } else if (probe) {
         return false;
     } else {
-        cpu_restore_state(cs, retaddr, true);
+        cpu_restore_state(cs, retaddr);
         HELPER(exception_cause_vaddr)(env, env->pc, ret, address);
     }
 }
@@ -296,7 +300,7 @@ void xtensa_cpu_do_transaction_failed(CPUState *cs, hwaddr physaddr, vaddr addr,
     XtensaCPU *cpu = XTENSA_CPU(cs);
     CPUXtensaState *env = &cpu->env;
 
-    cpu_restore_state(cs, retaddr, true);
+    cpu_restore_state(cs, retaddr);
     HELPER(exception_cause_vaddr)(env, env->pc,
                                   access_type == MMU_INST_FETCH ?
                                   INSTR_PIF_ADDR_ERROR_CAUSE :

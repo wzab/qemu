@@ -93,8 +93,10 @@ Debug options:
 ``-g port``
    Wait gdb connection to port
 
-``-singlestep``
-   Run the emulation in single step mode.
+``-one-insn-per-tb``
+   Run the emulation with one guest instruction per translation block.
+   This slows down emulation a lot, but can be useful in some situations,
+   such as when trying to analyse the logs produced by the ``-d`` option.
 
 Environment variables:
 
@@ -166,7 +168,6 @@ Other binaries
 
 -  user mode (PowerPC)
 
-   * ``qemu-ppc64abi32`` TODO.
    * ``qemu-ppc64`` TODO.
    * ``qemu-ppc`` TODO.
 
@@ -243,5 +244,7 @@ Debug options:
 ``-p pagesize``
    Act as if the host page size was 'pagesize' bytes
 
-``-singlestep``
-   Run the emulation in single step mode.
+``-one-insn-per-tb``
+   Run the emulation with one guest instruction per translation block.
+   This slows down emulation a lot, but can be useful in some situations,
+   such as when trying to analyse the logs produced by the ``-d`` option.

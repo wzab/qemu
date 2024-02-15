@@ -168,12 +168,6 @@ class QAPISchemaGenRSTVisitor(QAPISchemaVisitor):
             # TODO drop fallbacks when undocumented members are outlawed
             if section.text:
                 defn = section.text
-            elif (variants and variants.tag_member == section.member
-                  and not section.member.type.doc_type()):
-                values = section.member.type.member_names()
-                defn = [nodes.Text('One of ')]
-                defn.extend(intersperse([nodes.literal('', v) for v in values],
-                                        nodes.Text(', ')))
             else:
                 defn = [nodes.Text('Not documented')]
 
@@ -268,6 +262,9 @@ class QAPISchemaGenRSTVisitor(QAPISchemaVisitor):
         """Return list of doctree nodes for additional sections"""
         nodelist = []
         for section in doc.sections:
+            if section.name and section.name == 'TODO':
+                # Hide TODO: sections
+                continue
             snode = self._make_section(section.name)
             if section.name and section.name.startswith('Example'):
                 snode += self._nodes_for_example(section.text)
@@ -512,7 +509,7 @@ class QAPIDocDirective(Directive):
         except QAPIError as err:
             # Launder QAPI parse errors into Sphinx extension errors
             # so they are displayed nicely to the user
-            raise ExtensionError(str(err))
+            raise ExtensionError(str(err)) from err
 
     def do_parse(self, rstlist, node):
         """Parse rST source lines and add them to the specified node

@@ -11,7 +11,6 @@
 #include "qemu/error-report.h"
 #include "qemu/log.h"
 #include "qapi/error.h"
-#include "qemu-common.h"
 #include "qemu/datadir.h"
 #include "cpu.h"
 #include "hw/irq.h"
@@ -198,7 +197,7 @@ static void mcf5208_sys_init(MemoryRegion *address_space, qemu_irq *pic)
     /* Timers.  */
     for (i = 0; i < 2; i++) {
         s = g_new0(m5208_timer_state, 1);
-        s->timer = ptimer_init(m5208_timer_trigger, s, PTIMER_POLICY_DEFAULT);
+        s->timer = ptimer_init(m5208_timer_trigger, s, PTIMER_POLICY_LEGACY);
         memory_region_init_io(&s->iomem, NULL, &m5208_timer_ops, s,
                               "m5208-timer", 0x00004000);
         memory_region_add_subregion(address_space, 0xfc080000 + 0x4000 * i,
@@ -207,16 +206,16 @@ static void mcf5208_sys_init(MemoryRegion *address_space, qemu_irq *pic)
     }
 }
 
-static void mcf_fec_init(MemoryRegion *sysmem, NICInfo *nd, hwaddr base,
-                         qemu_irq *irqs)
+static void mcf_fec_init(MemoryRegion *sysmem, hwaddr base, qemu_irq *irqs)
 {
     DeviceState *dev;
     SysBusDevice *s;
     int i;
 
-    qemu_check_nic_model(nd, TYPE_MCF_FEC_NET);
-    dev = qdev_new(TYPE_MCF_FEC_NET);
-    qdev_set_nic_properties(dev, nd);
+    dev = qemu_create_nic_device(TYPE_MCF_FEC_NET, true, NULL);
+    if (!dev) {
+        return;
+    }
 
     s = SYS_BUS_DEVICE(dev);
     sysbus_realize_and_unref(s, &error_fatal);
@@ -262,20 +261,13 @@ static void mcf5208evb_init(MachineState *machine)
     /* Internal peripherals.  */
     pic = mcf_intc_init(address_space_mem, 0xfc048000, cpu);
 
-    mcf_uart_mm_init(0xfc060000, pic[26], serial_hd(0));
-    mcf_uart_mm_init(0xfc064000, pic[27], serial_hd(1));
-    mcf_uart_mm_init(0xfc068000, pic[28], serial_hd(2));
+    mcf_uart_create_mmap(0xfc060000, pic[26], serial_hd(0));
+    mcf_uart_create_mmap(0xfc064000, pic[27], serial_hd(1));
+    mcf_uart_create_mmap(0xfc068000, pic[28], serial_hd(2));
 
     mcf5208_sys_init(address_space_mem, pic);
 
-    if (nb_nics > 1) {
-        error_report("Too many NICs");
-        exit(1);
-    }
-    if (nd_table[0].used) {
-        mcf_fec_init(address_space_mem, &nd_table[0],
-                     0xfc030000, pic + 36);
-    }
+    mcf_fec_init(address_space_mem, 0xfc030000, pic + 36);
 
     g_free(pic);
 

@@ -1,10 +1,13 @@
 #include "qemu/osdep.h"
 #include "qemu/cutils.h"
+#include "qemu/memalign.h"
+#include "qemu/error-report.h"
 #include "cpu.h"
 #include "helper_regs.h"
 #include "hw/ppc/spapr.h"
 #include "mmu-hash64.h"
 #include "mmu-book3s-v3.h"
+
 
 static inline bool valid_ptex(PowerPCCPU *cpu, target_ulong ptex)
 {
@@ -331,7 +334,7 @@ static void *hpt_prepare_thread(void *opaque)
         pending->ret = H_NO_MEM;
     }
 
-    qemu_mutex_lock_iothread();
+    bql_lock();
 
     if (SPAPR_MACHINE(qdev_get_machine())->pending_hpt == pending) {
         /* Ready to go */
@@ -341,7 +344,7 @@ static void *hpt_prepare_thread(void *opaque)
         free_pending_hpt(pending);
     }
 
-    qemu_mutex_unlock_iothread();
+    bql_unlock();
     return NULL;
 }
 

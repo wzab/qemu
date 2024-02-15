@@ -23,6 +23,7 @@
 #include "qemu/base64.h"
 #include "qemu/module.h"
 #include "qemu/uuid.h"
+#include "qemu/error-report.h"
 #include "crypto/hash.h"
 #include "sysemu/kvm.h"
 #include "sev.h"
@@ -34,7 +35,6 @@
 #include "monitor/monitor.h"
 #include "monitor/hmp-target.h"
 #include "qapi/qapi-commands-misc-target.h"
-#include "qapi/qmp/qerror.h"
 #include "exec/confidential-guest-support.h"
 #include "hw/i386/pc.h"
 #include "exec/address-spaces.h"
@@ -167,7 +167,7 @@ sev_ioctl(int fd, int cmd, void *data, int *error)
 
     input.id = cmd;
     input.sev_fd = fd;
-    input.data = (__u64)(unsigned long)data;
+    input.data = (uintptr_t)data;
 
     r = kvm_vm_ioctl(kvm_state, KVM_MEMORY_ENCRYPT_OP, &input);
 
@@ -240,7 +240,7 @@ sev_ram_block_added(RAMBlockNotifier *n, void *host, size_t size,
         return;
     }
 
-    range.addr = (__u64)(unsigned long)host;
+    range.addr = (uintptr_t)host;
     range.size = max_size;
 
     trace_kvm_memcrypt_register_region(host, max_size);
@@ -270,7 +270,7 @@ sev_ram_block_removed(RAMBlockNotifier *n, void *host, size_t size,
         return;
     }
 
-    range.addr = (__u64)(unsigned long)host;
+    range.addr = (uintptr_t)host;
     range.size = max_size;
 
     trace_kvm_memcrypt_unregister_region(host, max_size);
@@ -531,12 +531,46 @@ e_free:
     return 1;
 }
 
+static int sev_get_cpu0_id(int fd, guchar **id, size_t *id_len, Error **errp)
+{
+    guchar *id_data;
+    struct sev_user_data_get_id2 get_id2 = {};
+    int err, r;
+
+    /* query the ID length */
+    r = sev_platform_ioctl(fd, SEV_GET_ID2, &get_id2, &err);
+    if (r < 0 && err != SEV_RET_INVALID_LEN) {
+        error_setg(errp, "SEV: Failed to get ID ret=%d fw_err=%d (%s)",
+                   r, err, fw_error_to_str(err));
+        return 1;
+    }
+
+    id_data = g_new(guchar, get_id2.length);
+    get_id2.address = (unsigned long)id_data;
+
+    r = sev_platform_ioctl(fd, SEV_GET_ID2, &get_id2, &err);
+    if (r < 0) {
+        error_setg(errp, "SEV: Failed to get ID ret=%d fw_err=%d (%s)",
+                   r, err, fw_error_to_str(err));
+        goto err;
+    }
+
+    *id = id_data;
+    *id_len = get_id2.length;
+    return 0;
+
+err:
+    g_free(id_data);
+    return 1;
+}
+
 static SevCapability *sev_get_capabilities(Error **errp)
 {
     SevCapability *cap = NULL;
     guchar *pdh_data = NULL;
     guchar *cert_chain_data = NULL;
-    size_t pdh_len = 0, cert_chain_len = 0;
+    guchar *cpu0_id_data = NULL;
+    size_t pdh_len = 0, cert_chain_len = 0, cpu0_id_len = 0;
     uint32_t ebx;
     int fd;
 
@@ -561,9 +595,14 @@ static SevCapability *sev_get_capabilities(Error **errp)
         goto out;
     }
 
+    if (sev_get_cpu0_id(fd, &cpu0_id_data, &cpu0_id_len, errp)) {
+        goto out;
+    }
+
     cap = g_new0(SevCapability, 1);
     cap->pdh = g_base64_encode(pdh_data, pdh_len);
     cap->cert_chain = g_base64_encode(cert_chain_data, cert_chain_len);
+    cap->cpu0_id = g_base64_encode(cpu0_id_data, cpu0_id_len);
 
     host_cpuid(0x8000001F, 0, NULL, &ebx, NULL, NULL);
     cap->cbitpos = ebx & 0x3f;
@@ -575,6 +614,7 @@ static SevCapability *sev_get_capabilities(Error **errp)
     cap->reduced_phys_bits = 1;
 
 out:
+    g_free(cpu0_id_data);
     g_free(pdh_data);
     g_free(cert_chain_data);
     close(fd);
@@ -727,7 +767,7 @@ sev_launch_update_data(SevGuestState *sev, uint8_t *addr, uint64_t len)
         return 1;
     }
 
-    update.uaddr = (__u64)(unsigned long)addr;
+    update.uaddr = (uintptr_t)addr;
     update.len = len;
     trace_kvm_sev_launch_update_data(addr, len);
     ret = sev_ioctl(sev->sev_fd, KVM_SEV_LAUNCH_UPDATE_DATA,
@@ -851,7 +891,7 @@ sev_launch_finish(SevGuestState *sev)
     /* add migration blocker */
     error_setg(&sev_mig_blocker,
                "SEV: Migration is not implemented");
-    migrate_add_blocker(sev_mig_blocker, &error_fatal);
+    migrate_add_blocker(&sev_mig_blocker, &error_fatal);
 }
 
 static void
@@ -892,15 +932,26 @@ int sev_kvm_init(ConfidentialGuestSupport *cgs, Error **errp)
     host_cpuid(0x8000001F, 0, NULL, &ebx, NULL, NULL);
     host_cbitpos = ebx & 0x3f;
 
+    /*
+     * The cbitpos value will be placed in bit positions 5:0 of the EBX
+     * register of CPUID 0x8000001F. No need to verify the range as the
+     * comparison against the host value accomplishes that.
+     */
     if (host_cbitpos != sev->cbitpos) {
         error_setg(errp, "%s: cbitpos check failed, host '%d' requested '%d'",
                    __func__, host_cbitpos, sev->cbitpos);
         goto err;
     }
 
-    if (sev->reduced_phys_bits < 1) {
-        error_setg(errp, "%s: reduced_phys_bits check failed, it should be >=1,"
-                   " requested '%d'", __func__, sev->reduced_phys_bits);
+    /*
+     * The reduced-phys-bits value will be placed in bit positions 11:6 of
+     * the EBX register of CPUID 0x8000001F, so verify the supplied value
+     * is in the range of 1 to 63.
+     */
+    if (sev->reduced_phys_bits < 1 || sev->reduced_phys_bits > 63) {
+        error_setg(errp, "%s: reduced_phys_bits check failed,"
+                   " it should be in the range of 1 to 63, requested '%d'",
+                   __func__, sev->reduced_phys_bits);
         goto err;
     }
 

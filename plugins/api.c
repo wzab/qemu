@@ -36,6 +36,7 @@
 
 #include "qemu/osdep.h"
 #include "qemu/plugin.h"
+#include "qemu/log.h"
 #include "tcg/tcg.h"
 #include "exec/exec-all.h"
 #include "exec/ram_addr.h"
@@ -44,6 +45,11 @@
 #ifndef CONFIG_USER_ONLY
 #include "qemu/plugin-memory.h"
 #include "hw/boards.h"
+#else
+#include "qemu.h"
+#ifdef CONFIG_LINUX
+#include "loader.h"
+#endif
 #endif
 
 /* Uninstall and Reset handlers */
@@ -283,6 +289,8 @@ struct qemu_plugin_hwaddr *qemu_plugin_get_hwaddr(qemu_plugin_meminfo_t info,
     enum qemu_plugin_mem_rw rw = get_plugin_meminfo_rw(info);
     hwaddr_info.is_store = (rw & QEMU_PLUGIN_MEM_W) != 0;
 
+    assert(mmu_idx < NB_MMU_MODES);
+
     if (!tlb_plugin_lookup(cpu, vaddr, mmu_idx,
                            hwaddr_info.is_store, &hwaddr_info)) {
         error_report("invalid use of qemu_plugin_get_hwaddr");
@@ -308,22 +316,7 @@ uint64_t qemu_plugin_hwaddr_phys_addr(const struct qemu_plugin_hwaddr *haddr)
 {
 #ifdef CONFIG_SOFTMMU
     if (haddr) {
-        if (!haddr->is_io) {
-            RAMBlock *block;
-            ram_addr_t offset;
-            void *hostaddr = haddr->v.ram.hostaddr;
-
-            block = qemu_ram_block_from_host(hostaddr, false, &offset);
-            if (!block) {
-                error_report("Bad host ram pointer %p", haddr->v.ram.hostaddr);
-                abort();
-            }
-
-            return block->offset + offset + block->mr->addr;
-        } else {
-            MemoryRegionSection *mrs = haddr->v.io.section;
-            return mrs->offset_within_address_space + haddr->v.io.offset;
-        }
+        return haddr->phys_addr;
     }
 #endif
     return 0;
@@ -333,13 +326,13 @@ const char *qemu_plugin_hwaddr_device_name(const struct qemu_plugin_hwaddr *h)
 {
 #ifdef CONFIG_SOFTMMU
     if (h && h->is_io) {
-        MemoryRegionSection *mrs = h->v.io.section;
-        if (!mrs->mr->name) {
-            unsigned long maddr = 0xffffffff & (uintptr_t) mrs->mr;
-            g_autofree char *temp = g_strdup_printf("anon%08lx", maddr);
+        MemoryRegion *mr = h->mr;
+        if (!mr->name) {
+            unsigned maddr = (uintptr_t)mr;
+            g_autofree char *temp = g_strdup_printf("anon%08x", maddr);
             return g_intern_string(temp);
         } else {
-            return g_intern_string(mrs->mr->name);
+            return g_intern_string(mr->name);
         }
     } else {
         return g_intern_static_string("RAM");
@@ -390,4 +383,47 @@ void qemu_plugin_outs(const char *string)
 bool qemu_plugin_bool_parse(const char *name, const char *value, bool *ret)
 {
     return name && value && qapi_bool_parse(name, value, ret, NULL);
+}
+
+/*
+ * Binary path, start and end locations
+ */
+const char *qemu_plugin_path_to_binary(void)
+{
+    char *path = NULL;
+#ifdef CONFIG_USER_ONLY
+    TaskState *ts = (TaskState *) current_cpu->opaque;
+    path = g_strdup(ts->bprm->filename);
+#endif
+    return path;
+}
+
+uint64_t qemu_plugin_start_code(void)
+{
+    uint64_t start = 0;
+#ifdef CONFIG_USER_ONLY
+    TaskState *ts = (TaskState *) current_cpu->opaque;
+    start = ts->info->start_code;
+#endif
+    return start;
+}
+
+uint64_t qemu_plugin_end_code(void)
+{
+    uint64_t end = 0;
+#ifdef CONFIG_USER_ONLY
+    TaskState *ts = (TaskState *) current_cpu->opaque;
+    end = ts->info->end_code;
+#endif
+    return end;
+}
+
+uint64_t qemu_plugin_entry_code(void)
+{
+    uint64_t entry = 0;
+#ifdef CONFIG_USER_ONLY
+    TaskState *ts = (TaskState *) current_cpu->opaque;
+    entry = ts->info->entry;
+#endif
+    return entry;
 }
