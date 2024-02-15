@@ -157,13 +157,13 @@ system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
 
 #WZab added devices
 
-softmmu_ss.add(when: 'CONFIG_WZAB_PCI', if_true: files('wzab_enc1.c'))
-softmmu_ss.add(when: 'CONFIG_WZAB_PCI', if_true: files('wzab_adc1.c'))
-softmmu_ss.add(when: 'CONFIG_WZAB_PCI', if_true: files('wzab_tim1.c'))
+system_ss.add(when: 'CONFIG_WZAB_PCI', if_true: files('wzab_enc1.c'))
+system_ss.add(when: 'CONFIG_WZAB_PCI', if_true: files('wzab_adc1.c'))
+system_ss.add(when: 'CONFIG_WZAB_PCI', if_true: files('wzab_tim1.c'))
 
-softmmu_ss.add(when: 'CONFIG_WZAB', if_true: files('wzab_sysbus_enc1.c'))
-softmmu_ss.add(when: 'CONFIG_WZAB', if_true: files('wzab_sysbus_adc1.c'))
-softmmu_ss.add(when: 'CONFIG_WZAB', if_true: files('wzab_sysbus_tim1.c'))
+system_ss.add(when: 'CONFIG_WZAB', if_true: files('wzab_sysbus_enc1.c'))
+system_ss.add(when: 'CONFIG_WZAB', if_true: files('wzab_sysbus_adc1.c'))
+system_ss.add(when: 'CONFIG_WZAB', if_true: files('wzab_sysbus_tim1.c'))
 libmcrypt = cc.find_library('mcrypt', required: true)
-softmmu_ss.add(declare_dependency(dependencies: libmcrypt))
+system_ss.add(declare_dependency(dependencies: libmcrypt))
 
