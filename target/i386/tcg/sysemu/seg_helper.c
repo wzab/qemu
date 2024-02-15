@@ -19,13 +19,13 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/log.h"
 #include "cpu.h"
 #include "exec/helper-proto.h"
 #include "exec/cpu_ldst.h"
 #include "tcg/helper-tcg.h"
 #include "../seg_helper.h"
 
-#ifdef TARGET_X86_64
 void helper_syscall(CPUX86State *env, int next_eip_addend)
 {
     int selector;
@@ -34,6 +34,7 @@ void helper_syscall(CPUX86State *env, int next_eip_addend)
         raise_exception_err_ra(env, EXCP06_ILLOP, 0, GETPC());
     }
     selector = (env->star >> 32) & 0xffff;
+#ifdef TARGET_X86_64
     if (env->hflags & HF_LMA_MASK) {
         int code64;
 
@@ -60,7 +61,9 @@ void helper_syscall(CPUX86State *env, int next_eip_addend)
         } else {
             env->eip = env->cstar;
         }
-    } else {
+    } else
+#endif
+    {
         env->regs[R_ECX] = (uint32_t)(env->eip + next_eip_addend);
 
         env->eflags &= ~(IF_MASK | RF_MASK | VM_MASK);
@@ -77,7 +80,6 @@ void helper_syscall(CPUX86State *env, int next_eip_addend)
         env->eip = (uint32_t)env->star;
     }
 }
-#endif /* TARGET_X86_64 */
 
 void handle_even_inj(CPUX86State *env, int intno, int is_int,
                      int error_code, int is_hw, int rm)
@@ -167,7 +169,7 @@ bool x86_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
         cs->interrupt_request &= ~(CPU_INTERRUPT_HARD |
                                    CPU_INTERRUPT_VIRQ);
         intno = cpu_get_pic_interrupt(env);
-        qemu_log_mask(CPU_LOG_TB_IN_ASM,
+        qemu_log_mask(CPU_LOG_INT,
                       "Servicing hardware INT=0x%02x\n", intno);
         do_interrupt_x86_hardirq(env, intno, 1);
         break;
@@ -175,7 +177,7 @@ bool x86_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
         cpu_svm_check_intercept_param(env, SVM_EXIT_VINTR, 0, 0);
         intno = x86_ldl_phys(cs, env->vm_vmcb
                              + offsetof(struct vmcb, control.int_vector));
-        qemu_log_mask(CPU_LOG_TB_IN_ASM,
+        qemu_log_mask(CPU_LOG_INT,
                       "Servicing virtual hardware INT=0x%02x\n", intno);
         do_interrupt_x86_hardirq(env, intno, 1);
         cs->interrupt_request &= ~CPU_INTERRUPT_VIRQ;

@@ -27,11 +27,9 @@
 
 #include "qemu/osdep.h"
 #include "qapi/error.h"
-#include "qemu-common.h"
 #include "qemu/datadir.h"
 #include "hw/clock.h"
 #include "hw/mips/mips.h"
-#include "hw/mips/cpudevs.h"
 #include "hw/char/serial.h"
 #include "hw/isa/isa.h"
 #include "net/net.h"
@@ -63,18 +61,11 @@ static uint64_t load_kernel(void)
     uint64_t entry, kernel_high, initrd_size;
     long kernel_size;
     ram_addr_t initrd_offset;
-    int big_endian;
-
-#ifdef TARGET_WORDS_BIGENDIAN
-    big_endian = 1;
-#else
-    big_endian = 0;
-#endif
 
     kernel_size = load_elf(loaderparams.kernel_filename, NULL,
                            cpu_mips_kseg0_to_phys, NULL,
                            &entry, NULL,
-                           &kernel_high, NULL, big_endian,
+                           &kernel_high, NULL, TARGET_BIG_ENDIAN,
                            EM_MIPS, 1, 0);
     if (kernel_size < 0) {
         error_report("could not load kernel '%s': %s",
@@ -162,7 +153,7 @@ mips_mipssim_init(MachineState *machine)
     cpu = mips_cpu_create_with_clock(machine->cpu_type, cpuclk);
     env = &cpu->env;
 
-    reset_info = g_malloc0(sizeof(ResetData));
+    reset_info = g_new0(ResetData, 1);
     reset_info->cpu = cpu;
     reset_info->vector = env->active_tc.PC;
     qemu_register_reset(main_cpu_reset, reset_info);

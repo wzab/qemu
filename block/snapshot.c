@@ -57,6 +57,8 @@ int bdrv_snapshot_find(BlockDriverState *bs, QEMUSnapshotInfo *sn_info,
     QEMUSnapshotInfo *sn_tab, *sn;
     int nb_sns, i, ret;
 
+    GLOBAL_STATE_CODE();
+
     ret = -ENOENT;
     nb_sns = bdrv_snapshot_list(bs, &sn_tab);
     if (nb_sns < 0) {
@@ -105,6 +107,7 @@ bool bdrv_snapshot_find_by_id_and_name(BlockDriverState *bs,
     bool ret = false;
 
     assert(id || name);
+    GLOBAL_STATE_CODE();
 
     nb_sns = bdrv_snapshot_list(bs, &sn_tab);
     if (nb_sns < 0) {
@@ -148,41 +151,33 @@ bool bdrv_snapshot_find_by_id_and_name(BlockDriverState *bs,
 }
 
 /**
- * Return a pointer to the child BDS pointer to which we can fall
+ * Return a pointer to child of given BDS to which we can fall
  * back if the given BDS does not support snapshots.
  * Return NULL if there is no BDS to (safely) fall back to.
- *
- * We need to return an indirect pointer because bdrv_snapshot_goto()
- * has to modify the BdrvChild pointer.
  */
-static BdrvChild **bdrv_snapshot_fallback_ptr(BlockDriverState *bs)
+static BdrvChild * GRAPH_RDLOCK
+bdrv_snapshot_fallback_child(BlockDriverState *bs)
 {
-    BdrvChild **fallback;
+    BdrvChild *fallback = bdrv_primary_child(bs);
     BdrvChild *child;
 
-    /*
-     * The only BdrvChild pointers that are safe to modify (and which
-     * we can thus return a reference to) are bs->file and
-     * bs->backing.
-     */
-    fallback = &bs->file;
-    if (!*fallback && bs->drv && bs->drv->is_filter) {
-        fallback = &bs->backing;
-    }
+    GLOBAL_STATE_CODE();
+    assert_bdrv_graph_readable();
 
-    if (!*fallback) {
+    /* We allow fallback only to primary child */
+    if (!fallback) {
         return NULL;
     }
 
     /*
      * Check that there are no other children that would need to be
      * snapshotted.  If there are, it is not safe to fall back to
-     * *fallback.
+     * fallback.
      */
     QLIST_FOREACH(child, &bs->children, next) {
         if (child->role & (BDRV_CHILD_DATA | BDRV_CHILD_METADATA |
                            BDRV_CHILD_FILTERED) &&
-            child != *fallback)
+            child != fallback)
         {
             return NULL;
         }
@@ -191,16 +186,20 @@ static BdrvChild **bdrv_snapshot_fallback_ptr(BlockDriverState *bs)
     return fallback;
 }
 
-static BlockDriverState *bdrv_snapshot_fallback(BlockDriverState *bs)
+static BlockDriverState * GRAPH_RDLOCK
+bdrv_snapshot_fallback(BlockDriverState *bs)
 {
-    BdrvChild **child_ptr = bdrv_snapshot_fallback_ptr(bs);
-    return child_ptr ? (*child_ptr)->bs : NULL;
+    GLOBAL_STATE_CODE();
+    return child_bs(bdrv_snapshot_fallback_child(bs));
 }
 
 int bdrv_can_snapshot(BlockDriverState *bs)
 {
     BlockDriver *drv = bs->drv;
-    if (!drv || !bdrv_is_inserted(bs) || bdrv_is_read_only(bs)) {
+
+    GLOBAL_STATE_CODE();
+
+    if (!drv || !bdrv_is_inserted(bs) || !bdrv_is_writable(bs)) {
         return 0;
     }
 
@@ -220,6 +219,9 @@ int bdrv_snapshot_create(BlockDriverState *bs,
 {
     BlockDriver *drv = bs->drv;
     BlockDriverState *fallback_bs = bdrv_snapshot_fallback(bs);
+
+    GLOBAL_STATE_CODE();
+
     if (!drv) {
         return -ENOMEDIUM;
     }
@@ -237,8 +239,10 @@ int bdrv_snapshot_goto(BlockDriverState *bs,
                        Error **errp)
 {
     BlockDriver *drv = bs->drv;
-    BdrvChild **fallback_ptr;
+    BdrvChild *fallback;
     int ret, open_ret;
+
+    GLOBAL_STATE_CODE();
 
     if (!drv) {
         error_setg(errp, "Block driver is closed");
@@ -258,13 +262,16 @@ int bdrv_snapshot_goto(BlockDriverState *bs,
         return ret;
     }
 
-    fallback_ptr = bdrv_snapshot_fallback_ptr(bs);
-    if (fallback_ptr) {
+    bdrv_graph_rdlock_main_loop();
+    fallback = bdrv_snapshot_fallback_child(bs);
+    bdrv_graph_rdunlock_main_loop();
+
+    if (fallback) {
         QDict *options;
         QDict *file_options;
         Error *local_err = NULL;
-        BlockDriverState *fallback_bs = (*fallback_ptr)->bs;
-        char *subqdict_prefix = g_strdup_printf("%s.", (*fallback_ptr)->name);
+        BlockDriverState *fallback_bs = fallback->bs;
+        char *subqdict_prefix = g_strdup_printf("%s.", fallback->name);
 
         options = qdict_clone_shallow(bs->options);
 
@@ -275,8 +282,8 @@ int bdrv_snapshot_goto(BlockDriverState *bs,
         qobject_unref(file_options);
         g_free(subqdict_prefix);
 
-        /* Force .bdrv_open() below to re-attach fallback_bs on *fallback_ptr */
-        qdict_put_str(options, (*fallback_ptr)->name,
+        /* Force .bdrv_open() below to re-attach fallback_bs on fallback */
+        qdict_put_str(options, fallback->name,
                       bdrv_get_node_name(fallback_bs));
 
         /* Now close bs, apply the snapshot on fallback_bs, and re-open bs */
@@ -285,8 +292,9 @@ int bdrv_snapshot_goto(BlockDriverState *bs,
         }
 
         /* .bdrv_open() will re-attach it */
-        bdrv_unref_child(bs, *fallback_ptr);
-        *fallback_ptr = NULL;
+        bdrv_graph_wrlock(NULL);
+        bdrv_unref_child(bs, fallback);
+        bdrv_graph_wrunlock(NULL);
 
         ret = bdrv_snapshot_goto(fallback_bs, snapshot_id, errp);
         open_ret = drv->bdrv_open(bs, options, bs->open_flags, &local_err);
@@ -300,15 +308,15 @@ int bdrv_snapshot_goto(BlockDriverState *bs,
         }
 
         /*
-         * fallback_ptr is &bs->file or &bs->backing.  *fallback_ptr
-         * was closed above and set to NULL, but the .bdrv_open() call
-         * has opened it again, because we set the respective option
-         * (with the qdict_put_str() call above).
-         * Assert that .bdrv_open() has attached some child on
-         * *fallback_ptr, and that it has attached the one we wanted
-         * it to (i.e., fallback_bs).
+         * fallback was a primary child. It was closed above and set to NULL,
+         * but the .bdrv_open() call has opened it again, because we set the
+         * respective option (with the qdict_put_str() call above).
+         * Assert that .bdrv_open() has attached the right BDS as primary child.
          */
-        assert(*fallback_ptr && fallback_bs == (*fallback_ptr)->bs);
+        bdrv_graph_rdlock_main_loop();
+        assert(bdrv_primary_bs(bs) == fallback_bs);
+        bdrv_graph_rdunlock_main_loop();
+
         bdrv_unref(fallback_bs);
         return ret;
     }
@@ -348,6 +356,8 @@ int bdrv_snapshot_delete(BlockDriverState *bs,
     BlockDriverState *fallback_bs = bdrv_snapshot_fallback(bs);
     int ret;
 
+    GLOBAL_STATE_CODE();
+
     if (!drv) {
         error_setg(errp, QERR_DEVICE_HAS_NO_MEDIUM, bdrv_get_device_name(bs));
         return -ENOMEDIUM;
@@ -378,8 +388,12 @@ int bdrv_snapshot_delete(BlockDriverState *bs,
 int bdrv_snapshot_list(BlockDriverState *bs,
                        QEMUSnapshotInfo **psn_info)
 {
+    GLOBAL_STATE_CODE();
+    GRAPH_RDLOCK_GUARD_MAINLOOP();
+
     BlockDriver *drv = bs->drv;
     BlockDriverState *fallback_bs = bdrv_snapshot_fallback(bs);
+
     if (!drv) {
         return -ENOMEDIUM;
     }
@@ -419,6 +433,9 @@ int bdrv_snapshot_load_tmp(BlockDriverState *bs,
 {
     BlockDriver *drv = bs->drv;
 
+    GLOBAL_STATE_CODE();
+    GRAPH_RDLOCK_GUARD_MAINLOOP();
+
     if (!drv) {
         error_setg(errp, QERR_DEVICE_HAS_NO_MEDIUM, bdrv_get_device_name(bs));
         return -ENOMEDIUM;
@@ -447,6 +464,8 @@ int bdrv_snapshot_load_tmp_by_id_or_name(BlockDriverState *bs,
     int ret;
     Error *local_err = NULL;
 
+    GLOBAL_STATE_CODE();
+
     ret = bdrv_snapshot_load_tmp(bs, id_or_name, NULL, &local_err);
     if (ret == -ENOENT || ret == -EINVAL) {
         error_free(local_err);
@@ -460,9 +479,9 @@ int bdrv_snapshot_load_tmp_by_id_or_name(BlockDriverState *bs,
 }
 
 
-static int bdrv_all_get_snapshot_devices(bool has_devices, strList *devices,
-                                         GList **all_bdrvs,
-                                         Error **errp)
+static int GRAPH_RDLOCK
+bdrv_all_get_snapshot_devices(bool has_devices, strList *devices,
+                              GList **all_bdrvs, Error **errp)
 {
     g_autoptr(GList) bdrvs = NULL;
 
@@ -494,8 +513,11 @@ static int bdrv_all_get_snapshot_devices(bool has_devices, strList *devices,
 }
 
 
-static bool bdrv_all_snapshots_includes_bs(BlockDriverState *bs)
+static bool GRAPH_RDLOCK bdrv_all_snapshots_includes_bs(BlockDriverState *bs)
 {
+    GLOBAL_STATE_CODE();
+    assert_bdrv_graph_readable();
+
     if (!bdrv_is_inserted(bs) || bdrv_is_read_only(bs)) {
         return false;
     }
@@ -514,6 +536,9 @@ bool bdrv_all_can_snapshot(bool has_devices, strList *devices,
 {
     g_autoptr(GList) bdrvs = NULL;
     GList *iterbdrvs;
+
+    GLOBAL_STATE_CODE();
+    GRAPH_RDLOCK_GUARD_MAINLOOP();
 
     if (bdrv_all_get_snapshot_devices(has_devices, devices, &bdrvs, errp) < 0) {
         return false;
@@ -548,6 +573,9 @@ int bdrv_all_delete_snapshot(const char *name,
 {
     g_autoptr(GList) bdrvs = NULL;
     GList *iterbdrvs;
+
+    GLOBAL_STATE_CODE();
+    GRAPH_RDLOCK_GUARD_MAINLOOP();
 
     if (bdrv_all_get_snapshot_devices(has_devices, devices, &bdrvs, errp) < 0) {
         return -1;
@@ -587,8 +615,15 @@ int bdrv_all_goto_snapshot(const char *name,
 {
     g_autoptr(GList) bdrvs = NULL;
     GList *iterbdrvs;
+    int ret;
 
-    if (bdrv_all_get_snapshot_devices(has_devices, devices, &bdrvs, errp) < 0) {
+    GLOBAL_STATE_CODE();
+
+    bdrv_graph_rdlock_main_loop();
+    ret = bdrv_all_get_snapshot_devices(has_devices, devices, &bdrvs, errp);
+    bdrv_graph_rdunlock_main_loop();
+
+    if (ret < 0) {
         return -1;
     }
 
@@ -596,16 +631,21 @@ int bdrv_all_goto_snapshot(const char *name,
     while (iterbdrvs) {
         BlockDriverState *bs = iterbdrvs->data;
         AioContext *ctx = bdrv_get_aio_context(bs);
-        int ret = 0;
+        bool all_snapshots_includes_bs;
 
         aio_context_acquire(ctx);
-        if (devices || bdrv_all_snapshots_includes_bs(bs)) {
-            ret = bdrv_snapshot_goto(bs, name, errp);
-        }
+        bdrv_graph_rdlock_main_loop();
+        all_snapshots_includes_bs = bdrv_all_snapshots_includes_bs(bs);
+        bdrv_graph_rdunlock_main_loop();
+
+        ret = (devices || all_snapshots_includes_bs) ?
+              bdrv_snapshot_goto(bs, name, errp) : 0;
         aio_context_release(ctx);
         if (ret < 0) {
+            bdrv_graph_rdlock_main_loop();
             error_prepend(errp, "Could not load snapshot '%s' on '%s': ",
                           name, bdrv_get_device_or_node_name(bs));
+            bdrv_graph_rdunlock_main_loop();
             return -1;
         }
 
@@ -621,6 +661,9 @@ int bdrv_all_has_snapshot(const char *name,
 {
     g_autoptr(GList) bdrvs = NULL;
     GList *iterbdrvs;
+
+    GLOBAL_STATE_CODE();
+    GRAPH_RDLOCK_GUARD_MAINLOOP();
 
     if (bdrv_all_get_snapshot_devices(has_devices, devices, &bdrvs, errp) < 0) {
         return -1;
@@ -664,6 +707,9 @@ int bdrv_all_create_snapshot(QEMUSnapshotInfo *sn,
     g_autoptr(GList) bdrvs = NULL;
     GList *iterbdrvs;
 
+    GLOBAL_STATE_CODE();
+    GRAPH_RDLOCK_GUARD_MAINLOOP();
+
     if (bdrv_all_get_snapshot_devices(has_devices, devices, &bdrvs, errp) < 0) {
         return -1;
     }
@@ -702,6 +748,9 @@ BlockDriverState *bdrv_all_find_vmstate_bs(const char *vmstate_bs,
 {
     g_autoptr(GList) bdrvs = NULL;
     GList *iterbdrvs;
+
+    GLOBAL_STATE_CODE();
+    GRAPH_RDLOCK_GUARD_MAINLOOP();
 
     if (bdrv_all_get_snapshot_devices(has_devices, devices, &bdrvs, errp) < 0) {
         return NULL;

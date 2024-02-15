@@ -16,6 +16,7 @@
 #include "qom/object.h"
 #include "qom/object_interfaces.h"
 #include "qemu/cutils.h"
+#include "qemu/memalign.h"
 #include "qapi/visitor.h"
 #include "qapi/string-input-visitor.h"
 #include "qapi/string-output-visitor.h"
@@ -30,6 +31,7 @@
  * of the QOM core on QObject?  */
 #include "qom/qom-qobject.h"
 #include "qapi/qmp/qbool.h"
+#include "qapi/qmp/qlist.h"
 #include "qapi/qmp/qnum.h"
 #include "qapi/qmp/qstring.h"
 #include "qemu/error-report.h"
@@ -219,6 +221,19 @@ static size_t type_object_get_size(TypeImpl *ti)
     return 0;
 }
 
+static size_t type_object_get_align(TypeImpl *ti)
+{
+    if (ti->instance_align) {
+        return ti->instance_align;
+    }
+
+    if (type_has_parent(ti)) {
+        return type_object_get_align(type_get_parent(ti));
+    }
+
+    return 0;
+}
+
 size_t object_type_get_instance_size(const char *typename)
 {
     TypeImpl *type = type_get_by_name(typename);
@@ -292,6 +307,7 @@ static void type_initialize(TypeImpl *ti)
 
     ti->class_size = type_class_get_size(ti);
     ti->instance_size = type_object_get_size(ti);
+    ti->instance_align = type_object_get_align(ti);
     /* Any type with zero instance_size is implicitly abstract.
      * This means interface types are all abstract.
      */
@@ -525,8 +541,13 @@ void object_initialize(void *data, size_t size, const char *typename)
 
 #ifdef CONFIG_MODULES
     if (!type) {
-        module_load_qom_one(typename);
-        type = type_get_by_name(typename);
+        int rv = module_load_qom(typename, &error_fatal);
+        if (rv > 0) {
+            type = type_get_by_name(typename);
+        } else {
+            error_report("missing object type '%s'", typename);
+            exit(1);
+        }
     }
 #endif
     if (!type) {
@@ -1032,8 +1053,13 @@ ObjectClass *module_object_class_by_name(const char *typename)
     oc = object_class_by_name(typename);
 #ifdef CONFIG_MODULES
     if (!oc) {
-        module_load_qom_one(typename);
-        oc = object_class_by_name(typename);
+        Error *local_err = NULL;
+        int rv = module_load_qom(typename, &local_err);
+        if (rv > 0) {
+            oc = object_class_by_name(typename);
+        } else if (rv < 0) {
+            error_report_err(local_err);
+        }
     }
 #endif
     return oc;
@@ -1167,10 +1193,14 @@ GSList *object_class_get_list_sorted(const char *implements_type,
 Object *object_ref(void *objptr)
 {
     Object *obj = OBJECT(objptr);
+    uint32_t ref;
+
     if (!obj) {
         return NULL;
     }
-    qatomic_inc(&obj->ref);
+    ref = qatomic_fetch_inc(&obj->ref);
+    /* Assert waaay before the integer overflows */
+    g_assert(ref < INT_MAX);
     return obj;
 }
 
@@ -1378,7 +1408,8 @@ bool object_property_get(Object *obj, const char *name, Visitor *v,
     }
 
     if (!prop->get) {
-        error_setg(errp, QERR_PERMISSION_DENIED);
+        error_setg(errp, "Property '%s.%s' is not readable",
+                   object_get_typename(obj), name);
         return false;
     }
     prop->get(obj, v, name, prop->opaque, &err);
@@ -1397,7 +1428,8 @@ bool object_property_set(Object *obj, const char *name, Visitor *v,
     }
 
     if (!prop->set) {
-        error_setg(errp, QERR_PERMISSION_DENIED);
+        error_setg(errp, "Property '%s.%s' is not writable",
+                   object_get_typename(obj), name);
         return false;
     }
     prop->set(obj, v, name, prop->opaque, errp);
@@ -1555,6 +1587,11 @@ void object_property_set_default_bool(ObjectProperty *prop, bool value)
 void object_property_set_default_str(ObjectProperty *prop, const char *value)
 {
     object_property_set_default(prop, QOBJECT(qstring_from_str(value)));
+}
+
+void object_property_set_default_list(ObjectProperty *prop)
+{
+    object_property_set_default(prop, QOBJECT(qlist_new()));
 }
 
 void object_property_set_default_int(ObjectProperty *prop, int64_t value)
@@ -2793,13 +2830,13 @@ static void object_class_init(ObjectClass *klass, void *data)
 
 static void register_types(void)
 {
-    static TypeInfo interface_info = {
+    static const TypeInfo interface_info = {
         .name = TYPE_INTERFACE,
         .class_size = sizeof(InterfaceClass),
         .abstract = true,
     };
 
-    static TypeInfo object_info = {
+    static const TypeInfo object_info = {
         .name = TYPE_OBJECT,
         .instance_size = sizeof(Object),
         .class_init = object_class_init,
