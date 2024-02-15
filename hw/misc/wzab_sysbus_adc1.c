@@ -261,7 +261,7 @@ static const VMStateDescription vmstate_wzadc1 = {
   .name = "wzadc1",
   .version_id = 2,
   .minimum_version_id = 2,
-  .minimum_version_id_old = 2,
+  //.minimum_version_id_old = 2,
   //.post_load = wzadc1_post_load,
   .fields      = (VMStateField []) {
     VMSTATE_TIMER_PTR(timer,WzAdc1State),

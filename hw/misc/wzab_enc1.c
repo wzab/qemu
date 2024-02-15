@@ -40,6 +40,7 @@
 #include "hw/hw.h"
 #include "hw/irq.h"
 #include "hw/pci/pci.h"
+#include "hw/pci/pci_device.h"
 #include <mcrypt.h>
 #include "qemu/timer.h"
 #include "wzab_enc1.h"

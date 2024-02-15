@@ -78,6 +78,7 @@
 #include "hw/hw.h"
 #include "hw/irq.h"
 #include "hw/pci/pci.h"
+#include "hw/pci/pci_device.h"
 #include "qemu/timer.h"
 #include "wzab_adc1.h"
 

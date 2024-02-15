@@ -309,7 +309,7 @@ static const VMStateDescription vmstate_wz_enc1 = {
   .name = "wz_enc1",
   .version_id = 2,
   .minimum_version_id = 2,
-  .minimum_version_id_old = 2,
+//  .minimum_version_id_old = 2,
   .fields      = (VMStateField []) {
     VMSTATE_TIMER_PTR(timer,WzEnc1State),
     VMSTATE_END_OF_LIST()
