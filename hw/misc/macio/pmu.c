@@ -737,8 +737,7 @@ static void pmu_realize(DeviceState *dev, Error **errp)
     timer_mod(s->one_sec_timer, s->one_sec_target);
 
     if (s->has_adb) {
-        qbus_init(&s->adb_bus, sizeof(s->adb_bus), TYPE_ADB_BUS,
-                  dev, "adb.0");
+        qbus_init(adb_bus, sizeof(*adb_bus), TYPE_ADB_BUS, dev, "adb.0");
         adb_register_autopoll_callback(adb_bus, pmu_adb_poll, s);
     }
 }
@@ -771,7 +770,7 @@ static void pmu_class_init(ObjectClass *oc, void *data)
     DeviceClass *dc = DEVICE_CLASS(oc);
 
     dc->realize = pmu_realize;
-    dc->reset = pmu_reset;
+    device_class_set_legacy_reset(dc, pmu_reset);
     dc->vmsd = &vmstate_pmu;
     device_class_set_props(dc, pmu_properties);
     set_bit(DEVICE_CATEGORY_BRIDGE, dc->categories);
@@ -793,7 +792,7 @@ static void mos6522_pmu_portB_write(MOS6522State *s)
     pmu_update(ps);
 }
 
-static void mos6522_pmu_reset_hold(Object *obj)
+static void mos6522_pmu_reset_hold(Object *obj, ResetType type)
 {
     MOS6522State *ms = MOS6522(obj);
     MOS6522PMUState *mps = container_of(ms, MOS6522PMUState, parent_obj);
@@ -801,7 +800,7 @@ static void mos6522_pmu_reset_hold(Object *obj)
     MOS6522DeviceClass *mdc = MOS6522_GET_CLASS(ms);
 
     if (mdc->parent_phases.hold) {
-        mdc->parent_phases.hold(obj);
+        mdc->parent_phases.hold(obj, type);
     }
 
     ms->timers[0].frequency = VIA_TIMER_FREQ;

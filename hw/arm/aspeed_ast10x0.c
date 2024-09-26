@@ -424,6 +424,8 @@ static void aspeed_soc_ast1030_class_init(ObjectClass *klass, void *data)
     DeviceClass *dc = DEVICE_CLASS(klass);
     AspeedSoCClass *sc = ASPEED_SOC_CLASS(dc);
 
+    /* Reason: The Aspeed SoC can only be instantiated from a board */
+    dc->user_creatable = false;
     dc->realize = aspeed_soc_ast1030_realize;
 
     sc->name = "ast1030-a1";
@@ -436,6 +438,7 @@ static void aspeed_soc_ast1030_class_init(ObjectClass *klass, void *data)
     sc->wdts_num = 4;
     sc->macs_num = 1;
     sc->uarts_num = 13;
+    sc->uarts_base = ASPEED_DEV_UART1;
     sc->irqmap = aspeed_soc_ast1030_irqmap;
     sc->memmap = aspeed_soc_ast1030_memmap;
     sc->num_cpus = 1;

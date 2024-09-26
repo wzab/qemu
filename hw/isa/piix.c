@@ -336,7 +336,7 @@ static void pci_piix_realize(PCIDevice *dev, const char *uhci_type,
         i8254_pit_init(isa_bus, 0x40, 0, NULL);
     }
 
-    i8257_dma_init(isa_bus, 0);
+    i8257_dma_init(OBJECT(dev), isa_bus, 0);
 
     /* RTC */
     qdev_prop_set_int32(DEVICE(&d->rtc), "base_year", 2000);
@@ -425,7 +425,7 @@ static void pci_piix_class_init(ObjectClass *klass, void *data)
     AcpiDevAmlIfClass *adevc = ACPI_DEV_AML_IF_CLASS(klass);
 
     k->config_write = piix_write_config;
-    dc->reset       = piix_reset;
+    device_class_set_legacy_reset(dc, piix_reset);
     dc->desc        = "ISA bridge";
     dc->hotpluggable   = false;
     k->vendor_id    = PCI_VENDOR_ID_INTEL;

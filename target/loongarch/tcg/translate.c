@@ -282,10 +282,9 @@ static uint64_t make_address_pc(DisasContext *ctx, uint64_t addr)
 
 static void loongarch_tr_translate_insn(DisasContextBase *dcbase, CPUState *cs)
 {
-    CPULoongArchState *env = cpu_env(cs);
     DisasContext *ctx = container_of(dcbase, DisasContext, base);
 
-    ctx->opcode = translator_ldl(env, &ctx->base, ctx->base.pc_next);
+    ctx->opcode = translator_ldl(cpu_env(cs), &ctx->base, ctx->base.pc_next);
 
     if (!decode(ctx, ctx->opcode)) {
         qemu_log_mask(LOG_UNIMP, "Error: unknown opcode. "
@@ -326,20 +325,12 @@ static void loongarch_tr_tb_stop(DisasContextBase *dcbase, CPUState *cs)
     }
 }
 
-static void loongarch_tr_disas_log(const DisasContextBase *dcbase,
-                                   CPUState *cpu, FILE *logfile)
-{
-    qemu_log("IN: %s\n", lookup_symbol(dcbase->pc_first));
-    target_disas(logfile, cpu, dcbase->pc_first, dcbase->tb->size);
-}
-
 static const TranslatorOps loongarch_tr_ops = {
     .init_disas_context = loongarch_tr_init_disas_context,
     .tb_start           = loongarch_tr_tb_start,
     .insn_start         = loongarch_tr_insn_start,
     .translate_insn     = loongarch_tr_translate_insn,
     .tb_stop            = loongarch_tr_tb_stop,
-    .disas_log          = loongarch_tr_disas_log,
 };
 
 void gen_intermediate_code(CPUState *cs, TranslationBlock *tb, int *max_insns,

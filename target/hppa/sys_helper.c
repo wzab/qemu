@@ -18,6 +18,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/log.h"
 #include "cpu.h"
 #include "exec/exec-all.h"
 #include "exec/helper-proto.h"
@@ -78,24 +79,35 @@ target_ulong HELPER(swap_system_mask)(CPUHPPAState *env, target_ulong nsm)
 
 void HELPER(rfi)(CPUHPPAState *env)
 {
-    env->iasq_f = (uint64_t)env->cr[CR_IIASQ] << 32;
-    env->iasq_b = (uint64_t)env->cr_back[0] << 32;
-    env->iaoq_f = env->cr[CR_IIAOQ];
-    env->iaoq_b = env->cr_back[1];
+    uint64_t mask;
+
+    cpu_hppa_put_psw(env, env->cr[CR_IPSW]);
 
     /*
      * For pa2.0, IIASQ is the top bits of the virtual address.
      * To recreate the space identifier, remove the offset bits.
+     * For pa1.x, the mask reduces to no change to space.
      */
-    if (hppa_is_pa20(env)) {
-        env->iasq_f &= ~env->iaoq_f;
-        env->iasq_b &= ~env->iaoq_b;
-    }
+    mask = gva_offset_mask(env->psw);
 
-    cpu_hppa_put_psw(env, env->cr[CR_IPSW]);
+    env->iaoq_f = env->cr[CR_IIAOQ];
+    env->iaoq_b = env->cr_back[1];
+    env->iasq_f = (env->cr[CR_IIASQ] << 32) & ~(env->iaoq_f & mask);
+    env->iasq_b = (env->cr_back[0] << 32) & ~(env->iaoq_b & mask);
+
+    if (qemu_loglevel_mask(CPU_LOG_INT)) {
+        FILE *logfile = qemu_log_trylock();
+        if (logfile) {
+            CPUState *cs = env_cpu(env);
+
+            fprintf(logfile, "RFI: cpu %d\n", cs->cpu_index);
+            hppa_cpu_dump_state(cs, logfile, 0);
+            qemu_log_unlock(logfile);
+        }
+    }
 }
 
-void HELPER(getshadowregs)(CPUHPPAState *env)
+static void getshadowregs(CPUHPPAState *env)
 {
     env->gr[1] = env->shadow[0];
     env->gr[8] = env->shadow[1];
@@ -108,7 +120,7 @@ void HELPER(getshadowregs)(CPUHPPAState *env)
 
 void HELPER(rfi_r)(CPUHPPAState *env)
 {
-    helper_getshadowregs(env);
+    getshadowregs(env);
     helper_rfi(env);
 }
 

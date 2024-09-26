@@ -360,8 +360,13 @@ static void ebus_realize(PCIDevice *pci_dev, Error **errp)
     pci_dev->config[0x09] = 0x00; // programming i/f
     pci_dev->config[0x0D] = 0x0a; // latency_timer
 
-    memory_region_init_alias(&s->bar0, OBJECT(s), "bar0",
-                             pci_address_space_io(pci_dev), 0, 0x1000000);
+    /*
+     * BAR0 is accessed by OpenBSD but not for ebus device access: allow any
+     * memory access to this region to succeed which allows the OpenBSD kernel
+     * to boot.
+     */
+    memory_region_init_io(&s->bar0, OBJECT(s), &unassigned_io_ops, s,
+                          "bar0", 0x1000000);
     pci_register_bar(pci_dev, 0, PCI_BASE_ADDRESS_SPACE_MEMORY, &s->bar0);
     memory_region_init_alias(&s->bar1, OBJECT(s), "bar1",
                              pci_address_space_io(pci_dev), 0, 0x8000);
@@ -788,6 +793,12 @@ static void sun4v_init(MachineState *machine)
     sun4uv_init(get_system_memory(), machine, &hwdefs[1]);
 }
 
+static GlobalProperty hw_compat_sparc64[] = {
+    { "virtio-pci", "disable-legacy", "on", .optional = true },
+    { "virtio-device", "iommu_platform", "on" },
+};
+static const size_t hw_compat_sparc64_len = G_N_ELEMENTS(hw_compat_sparc64);
+
 static void sun4u_class_init(ObjectClass *oc, void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
@@ -805,6 +816,7 @@ static void sun4u_class_init(ObjectClass *oc, void *data)
     mc->default_nic = "sunhme";
     mc->no_parallel = !module_object_class_by_name(TYPE_ISA_PARALLEL);
     fwc->get_dev_path = sun4u_fw_dev_path;
+    compat_props_add(mc->compat_props, hw_compat_sparc64, hw_compat_sparc64_len);
 }
 
 static const TypeInfo sun4u_type = {

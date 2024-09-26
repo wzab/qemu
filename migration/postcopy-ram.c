@@ -44,7 +44,7 @@
  */
 #define MAX_DISCARDS_PER_COMMAND 12
 
-struct PostcopyDiscardState {
+typedef struct PostcopyDiscardState {
     const char *ramblock_name;
     uint16_t cur_entry;
     /*
@@ -54,7 +54,7 @@ struct PostcopyDiscardState {
     uint64_t length_list[MAX_DISCARDS_PER_COMMAND];
     unsigned int nsentwords;
     unsigned int nsentcmds;
-};
+} PostcopyDiscardState;
 
 static NotifierWithReturnList postcopy_notifier_list;
 
@@ -77,10 +77,9 @@ int postcopy_notify(enum PostcopyNotifyReason reason, Error **errp)
 {
     struct PostcopyNotifyData pnd;
     pnd.reason = reason;
-    pnd.errp = errp;
 
     return notifier_with_return_list_notify(&postcopy_notifier_list,
-                                            &pnd);
+                                            &pnd, errp);
 }
 
 /*
@@ -284,10 +283,10 @@ static bool request_ufd_features(int ufd, uint64_t features)
 static bool ufd_check_and_apply(int ufd, MigrationIncomingState *mis,
                                 Error **errp)
 {
+    ERRP_GUARD();
     uint64_t asked_features = 0;
     static uint64_t supported_features;
 
-    ERRP_GUARD();
     /*
      * it's not possible to
      * request UFFD_API twice per one fd
@@ -372,6 +371,7 @@ static int test_ramblock_postcopiable(RAMBlock *rb, Error **errp)
  */
 bool postcopy_ram_supported_by_host(MigrationIncomingState *mis, Error **errp)
 {
+    ERRP_GUARD();
     long pagesize = qemu_real_host_page_size();
     int ufd = -1;
     bool ret = false; /* Error unless we change it */
@@ -381,7 +381,6 @@ bool postcopy_ram_supported_by_host(MigrationIncomingState *mis, Error **errp)
     uint64_t feature_mask;
     RAMBlock *block;
 
-    ERRP_GUARD();
     if (qemu_target_page_size() > pagesize) {
         error_setg(errp, "Target page size bigger than host page size");
         goto out;
@@ -1239,7 +1238,7 @@ int postcopy_ram_incoming_setup(MigrationIncomingState *mis)
         return -1;
     }
 
-    postcopy_thread_create(mis, &mis->fault_thread, "fault-default",
+    postcopy_thread_create(mis, &mis->fault_thread, "mig/dst/fault",
                            postcopy_ram_fault_thread, QEMU_THREAD_JOINABLE);
     mis->have_fault_thread = true;
 
@@ -1259,7 +1258,7 @@ int postcopy_ram_incoming_setup(MigrationIncomingState *mis)
          * This thread needs to be created after the temp pages because
          * it'll fetch RAM_CHANNEL_POSTCOPY PostcopyTmpPage immediately.
          */
-        postcopy_thread_create(mis, &mis->postcopy_prio_thread, "fault-fast",
+        postcopy_thread_create(mis, &mis->postcopy_prio_thread, "mig/dst/preempt",
                                postcopy_preempt_thread, QEMU_THREAD_JOINABLE);
         mis->preempt_thread_status = PREEMPT_THREAD_CREATED;
     }
@@ -1770,4 +1769,10 @@ void *postcopy_preempt_thread(void *opaque)
     trace_postcopy_preempt_thread_exit();
 
     return NULL;
+}
+
+bool postcopy_is_paused(MigrationStatus status)
+{
+    return status == MIGRATION_STATUS_POSTCOPY_PAUSED ||
+        status == MIGRATION_STATUS_POSTCOPY_RECOVER_SETUP;
 }

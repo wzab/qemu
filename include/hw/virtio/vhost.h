@@ -129,6 +129,7 @@ struct vhost_dev {
     void *opaque;
     struct vhost_log *log;
     QLIST_ENTRY(vhost_dev) entry;
+    QLIST_ENTRY(vhost_dev) logdev_entry;
     QLIST_HEAD(, vhost_iommu) iommu_list;
     IOMMUNotifier n;
     const VhostDevConfigOps *config_ops;
@@ -169,6 +170,10 @@ int vhost_dev_init(struct vhost_dev *hdev, void *opaque,
  * @hdev: the common vhost_dev structure
  */
 void vhost_dev_cleanup(struct vhost_dev *hdev);
+
+void vhost_dev_disable_notifiers_nvqs(struct vhost_dev *hdev,
+                                      VirtIODevice *vdev,
+                                      unsigned int nvqs);
 
 /**
  * vhost_dev_enable_notifiers() - enable event notifiers

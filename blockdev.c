@@ -1395,7 +1395,8 @@ static void external_snapshot_action(TransactionAction *action,
     bdrv_drained_begin(state->old_bs);
 
     if (!bdrv_is_inserted(state->old_bs)) {
-        error_setg(errp, QERR_DEVICE_HAS_NO_MEDIUM, device);
+        error_setg(errp, "Device '%s' has no medium",
+                   bdrv_get_device_or_node_name(state->old_bs));
         return;
     }
 
@@ -1405,8 +1406,10 @@ static void external_snapshot_action(TransactionAction *action,
     }
 
     if (!bdrv_is_read_only(state->old_bs)) {
-        if (bdrv_flush(state->old_bs)) {
-            error_setg(errp, QERR_IO_ERROR);
+        ret = bdrv_flush(state->old_bs);
+        if (ret < 0) {
+            error_setg_errno(errp, -ret, "Write to node '%s' failed",
+                             bdrv_get_device_or_node_name(state->old_bs));
             return;
         }
     }
@@ -2252,8 +2255,7 @@ void coroutine_fn qmp_block_resize(const char *device, const char *node_name,
     }
 
     bdrv_graph_co_rdlock();
-    if (bdrv_op_is_blocked(bs, BLOCK_OP_TYPE_RESIZE, NULL)) {
-        error_setg(errp, QERR_DEVICE_IN_USE, device);
+    if (bdrv_op_is_blocked(bs, BLOCK_OP_TYPE_RESIZE, errp)) {
         bdrv_graph_co_rdunlock();
         return;
     }
@@ -2726,7 +2728,7 @@ static BlockJob *do_backup_common(BackupCommon *backup,
 
     job = backup_job_create(backup->job_id, bs, target_bs, backup->speed,
                             backup->sync, bmap, backup->bitmap_mode,
-                            backup->compress,
+                            backup->compress, backup->discard_source,
                             backup->filter_node_name,
                             &perf,
                             backup->on_source_error,

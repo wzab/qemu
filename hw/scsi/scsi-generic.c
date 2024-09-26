@@ -752,7 +752,6 @@ static void scsi_generic_realize(SCSIDevice *s, Error **errp)
 
     /* Only used by scsi-block, but initialize it nevertheless to be clean.  */
     s->default_scsi_version = -1;
-    s->io_timeout = DEFAULT_IO_TIMEOUT;
     scsi_generic_read_device_inquiry(s);
 }
 
@@ -798,7 +797,7 @@ static void scsi_generic_class_initfn(ObjectClass *klass, void *data)
     sc->parse_cdb    = scsi_generic_parse_cdb;
     dc->fw_name = "disk";
     dc->desc = "pass through generic scsi device (/dev/sg*)";
-    dc->reset = scsi_generic_reset;
+    device_class_set_legacy_reset(dc, scsi_generic_reset);
     device_class_set_props(dc, scsi_generic_properties);
     dc->vmsd  = &vmstate_scsi_device;
 }

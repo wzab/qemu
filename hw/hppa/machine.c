@@ -207,37 +207,37 @@ static FWCfgState *create_fw_cfg(MachineState *ms, PCIBus *pci_bus,
 
     val = cpu_to_le64(MIN_SEABIOS_HPPA_VERSION);
     fw_cfg_add_file(fw_cfg, "/etc/firmware-min-version",
-                    g_memdup(&val, sizeof(val)), sizeof(val));
+                    g_memdup2(&val, sizeof(val)), sizeof(val));
 
     val = cpu_to_le64(HPPA_TLB_ENTRIES - btlb_entries);
     fw_cfg_add_file(fw_cfg, "/etc/cpu/tlb_entries",
-                    g_memdup(&val, sizeof(val)), sizeof(val));
+                    g_memdup2(&val, sizeof(val)), sizeof(val));
 
     val = cpu_to_le64(btlb_entries);
     fw_cfg_add_file(fw_cfg, "/etc/cpu/btlb_entries",
-                    g_memdup(&val, sizeof(val)), sizeof(val));
+                    g_memdup2(&val, sizeof(val)), sizeof(val));
 
     len = strlen(mc->name) + 1;
     fw_cfg_add_file(fw_cfg, "/etc/hppa/machine",
-                    g_memdup(mc->name, len), len);
+                    g_memdup2(mc->name, len), len);
 
     val = cpu_to_le64(soft_power_reg);
     fw_cfg_add_file(fw_cfg, "/etc/hppa/power-button-addr",
-                    g_memdup(&val, sizeof(val)), sizeof(val));
+                    g_memdup2(&val, sizeof(val)), sizeof(val));
 
     val = cpu_to_le64(CPU_HPA + 16);
     fw_cfg_add_file(fw_cfg, "/etc/hppa/rtc-addr",
-                    g_memdup(&val, sizeof(val)), sizeof(val));
+                    g_memdup2(&val, sizeof(val)), sizeof(val));
 
     val = cpu_to_le64(CPU_HPA + 24);
     fw_cfg_add_file(fw_cfg, "/etc/hppa/DebugOutputPort",
-                    g_memdup(&val, sizeof(val)), sizeof(val));
+                    g_memdup2(&val, sizeof(val)), sizeof(val));
 
     fw_cfg_add_i16(fw_cfg, FW_CFG_BOOT_DEVICE, ms->boot_config.order[0]);
     qemu_register_boot_set(fw_cfg_boot_set, fw_cfg);
 
     fw_cfg_add_file(fw_cfg, "/etc/qemu-version",
-                    g_memdup(qemu_version, sizeof(qemu_version)),
+                    g_memdup2(qemu_version, sizeof(qemu_version)),
                     sizeof(qemu_version));
 
     fw_cfg_add_extra_pci_roots(pci_bus, fw_cfg);
@@ -396,10 +396,14 @@ static void machine_HP_common_init_tail(MachineState *machine, PCIBus *pci_bus,
     }
 
     /* create USB OHCI controller for USB keyboard & mouse on Astro machines */
-    if (!lasi_dev && machine->enable_graphics) {
+    if (!lasi_dev && machine->enable_graphics && defaults_enabled()) {
+        USBBus *usb_bus;
+
         pci_create_simple(pci_bus, -1, "pci-ohci");
-        usb_create_simple(usb_bus_find(-1), "usb-kbd");
-        usb_create_simple(usb_bus_find(-1), "usb-mouse");
+        usb_bus = USB_BUS(object_resolve_type_unambiguous(TYPE_USB_BUS,
+                                                          &error_abort));
+        usb_create_simple(usb_bus, "usb-kbd");
+        usb_create_simple(usb_bus, "usb-mouse");
     }
 
     /* register power switch emulation */

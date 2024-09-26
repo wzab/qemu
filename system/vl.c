@@ -68,6 +68,7 @@
 #include "sysemu/numa.h"
 #include "sysemu/hostmem.h"
 #include "exec/gdbstub.h"
+#include "gdbstub/enums.h"
 #include "qemu/timer.h"
 #include "chardev/char.h"
 #include "qemu/bitmap.h"
@@ -742,6 +743,9 @@ static QemuOptsList qemu_smp_opts = {
             .name = "clusters",
             .type = QEMU_OPT_NUMBER,
         }, {
+            .name = "modules",
+            .type = QEMU_OPT_NUMBER,
+        }, {
             .name = "cores",
             .type = QEMU_OPT_NUMBER,
         }, {
@@ -768,6 +772,10 @@ static QemuOptsList qemu_run_with_opts = {
 #endif
         {
             .name = "chroot",
+            .type = QEMU_OPT_STRING,
+        },
+        {
+            .name = "user",
             .type = QEMU_OPT_STRING,
         },
         { /* end of list */ }
@@ -891,7 +899,7 @@ static void help(int exitcode)
     printf("\nDuring emulation, the following keys are useful:\n"
            "ctrl-alt-f      toggle full screen\n"
            "ctrl-alt-n      switch to virtual console 'n'\n"
-           "ctrl-alt        toggle mouse and keyboard grab\n"
+           "ctrl-alt-g      toggle mouse and keyboard grab\n"
            "\n"
            "When using -nographic, press 'ctrl-a h' to get some help.\n"
            "\n"
@@ -992,9 +1000,16 @@ static bool vga_interface_available(VGAInterfaceType t)
     const VGAInterfaceInfo *ti = &vga_interfaces[t];
 
     assert(t < VGA_TYPE_MAX);
-    return !ti->class_names[0] ||
-           module_object_class_by_name(ti->class_names[0]) ||
-           module_object_class_by_name(ti->class_names[1]);
+
+    if (!ti->class_names[0] || module_object_class_by_name(ti->class_names[0])) {
+        return true;
+    }
+
+    if (ti->class_names[1] && module_object_class_by_name(ti->class_names[1])) {
+        return true;
+    }
+
+    return false;
 }
 
 static const char *
@@ -1657,28 +1672,27 @@ static const QEMUOption *lookup_opt(int argc, char **argv,
 
 static MachineClass *select_machine(QDict *qdict, Error **errp)
 {
+    ERRP_GUARD();
     const char *machine_type = qdict_get_try_str(qdict, "type");
-    GSList *machines = object_class_get_list(TYPE_MACHINE, false);
-    MachineClass *machine_class;
-    Error *local_err = NULL;
+    g_autoptr(GSList) machines = object_class_get_list(TYPE_MACHINE, false);
+    MachineClass *machine_class = NULL;
 
     if (machine_type) {
         machine_class = find_machine(machine_type, machines);
-        qdict_del(qdict, "type");
         if (!machine_class) {
-            error_setg(&local_err, "unsupported machine type");
+            error_setg(errp, "unsupported machine type: \"%s\"", machine_type);
         }
+        qdict_del(qdict, "type");
     } else {
         machine_class = find_default_machine(machines);
         if (!machine_class) {
-            error_setg(&local_err, "No machine specified, and there is no default");
+            error_setg(errp, "No machine specified, and there is no default");
         }
     }
 
-    g_slist_free(machines);
-    if (local_err) {
-        error_append_hint(&local_err, "Use -machine help to list supported machines\n");
-        error_propagate(errp, local_err);
+    if (!machine_class) {
+        error_append_hint(errp,
+                          "Use -machine help to list supported machines\n");
     }
     return machine_class;
 }
@@ -1932,7 +1946,7 @@ static void qemu_apply_machine_options(QDict *qdict)
     }
 
     if (current_machine->smp.cpus > 1) {
-        replay_add_blocker("smp");
+        replay_add_blocker("multiple CPUs");
     }
 }
 
@@ -1957,11 +1971,12 @@ static void qemu_create_early_backends(void)
 
     qemu_console_early_init();
 
-    if (dpy.has_gl && dpy.gl != DISPLAYGL_MODE_OFF && display_opengl == 0) {
+    if (dpy.has_gl && dpy.gl != DISPLAY_GL_MODE_OFF && display_opengl == 0) {
 #if defined(CONFIG_OPENGL)
-        error_report("OpenGL is not supported by the display");
+        error_report("OpenGL is not supported by display backend '%s'",
+                     DisplayType_str(dpy.type));
 #else
-        error_report("OpenGL support is disabled");
+        error_report("OpenGL support was not enabled in this build of QEMU");
 #endif
         exit(1);
     }
@@ -2118,7 +2133,6 @@ static void qemu_create_machine(QDict *qdict)
     }
 
     cpu_exec_init_all();
-    page_size_init();
 
     if (machine_class->hw_version) {
         qemu_set_hw_version(machine_class->hw_version);
@@ -2654,7 +2668,7 @@ static void qemu_create_cli_devices(void)
     rom_reset_order_override();
 }
 
-static void qemu_machine_creation_done(void)
+static bool qemu_machine_creation_done(Error **errp)
 {
     MachineState *machine = MACHINE(qdev_get_machine());
 
@@ -2677,15 +2691,15 @@ static void qemu_machine_creation_done(void)
 
     qdev_machine_creation_done();
 
-    if (machine->cgs) {
-        /*
-         * Verify that Confidential Guest Support has actually been initialized
-         */
-        assert(machine->cgs->ready);
+    if (machine->cgs && !machine->cgs->ready) {
+        error_setg(errp, "accelerator does not support confidential guest %s",
+                   object_get_typename(OBJECT(machine->cgs)));
+        exit(1);
     }
 
     if (foreach_device_config(DEV_GDB, gdbserver_start) < 0) {
-        exit(1);
+        error_setg(errp, "could not start gdbserver");
+        return false;
     }
     if (!vga_interface_created && !default_vga &&
         vga_interface_type != VGA_NONE) {
@@ -2693,6 +2707,7 @@ static void qemu_machine_creation_done(void)
                     "type does not use that option; "
                     "No VGA device has been created");
     }
+    return true;
 }
 
 void qmp_x_exit_preconfig(Error **errp)
@@ -2704,7 +2719,9 @@ void qmp_x_exit_preconfig(Error **errp)
 
     qemu_init_board();
     qemu_create_cli_devices();
-    qemu_machine_creation_done();
+    if (!qemu_machine_creation_done(errp)) {
+        return;
+    }
 
     if (loadvm) {
         RunState state = autostart ? RUN_STATE_RUNNING : runstate_get();
@@ -2718,7 +2735,8 @@ void qmp_x_exit_preconfig(Error **errp)
     if (incoming) {
         Error *local_err = NULL;
         if (strcmp(incoming, "defer") != 0) {
-            qmp_migrate_incoming(incoming, false, NULL, &local_err);
+            qmp_migrate_incoming(incoming, false, NULL, true, true,
+                                 &local_err);
             if (local_err) {
                 error_reportf_err(local_err, "-incoming %s: ", incoming);
                 exit(1);
@@ -2927,7 +2945,7 @@ void qemu_init(int argc, char **argv)
                           optarg, FD_OPTS);
                 break;
             case QEMU_OPTION_no_fd_bootchk:
-                fd_bootchk = 0;
+                qdict_put_str(machine_opts_dict, "fd-bootchk", "off");
                 break;
             case QEMU_OPTION_netdev:
                 default_net = 0;
@@ -3265,7 +3283,7 @@ void qemu_init(int argc, char **argv)
                 pid_file = optarg;
                 break;
             case QEMU_OPTION_win2k_hack:
-                win2k_install_hack = 1;
+                object_register_sugar_prop("ide-device", "win2k-install-hack", "true", true);
                 break;
             case QEMU_OPTION_acpitable:
                 opts = qemu_opts_parse_noisily(qemu_find_opts("acpi"),
@@ -3535,8 +3553,8 @@ void qemu_init(int argc, char **argv)
                 if (!opts) {
                     exit(1);
                 }
-                enable_mlock = qemu_opt_get_bool(opts, "mem-lock", false);
-                enable_cpu_pm = qemu_opt_get_bool(opts, "cpu-pm", false);
+                enable_mlock = qemu_opt_get_bool(opts, "mem-lock", enable_mlock);
+                enable_cpu_pm = qemu_opt_get_bool(opts, "cpu-pm", enable_cpu_pm);
                 break;
             case QEMU_OPTION_compat:
                 {
@@ -3581,6 +3599,7 @@ void qemu_init(int argc, char **argv)
                 break;
 #if defined(CONFIG_POSIX)
             case QEMU_OPTION_runas:
+                warn_report("-runas is deprecated, use '-run-with user=...' instead");
                 if (!os_set_runas(optarg)) {
                     error_report("User \"%s\" doesn't exist"
                                  " (and is not <uid>:<gid>)",
@@ -3607,6 +3626,16 @@ void qemu_init(int argc, char **argv)
                 if (str) {
                     os_set_chroot(str);
                 }
+                str = qemu_opt_get(opts, "user");
+                if (str) {
+                    if (!os_set_runas(str)) {
+                        error_report("User \"%s\" doesn't exist"
+                                     " (and is not <uid>:<gid>)",
+                                     optarg);
+                        exit(1);
+                    }
+                }
+
                 break;
             }
 #endif /* CONFIG_POSIX */

@@ -78,19 +78,18 @@
 #
 # @instances: the instances to be yanked
 #
-# Returns:
-#     - Nothing on success
-#     - @DeviceNotFound error, if any of the YankInstances doesn't exist
+# Errors:
+#     - If any of the YankInstances doesn't exist, DeviceNotFound
 #
-# Example:
+# .. qmp-example::
 #
-# -> { "execute": "yank",
-#      "arguments": {
-#          "instances": [
-#               { "type": "block-node",
-#                 "node-name": "nbd0" }
-#          ] } }
-# <- { "return": {} }
+#     -> { "execute": "yank",
+#          "arguments": {
+#              "instances": [
+#                   { "type": "block-node",
+#                     "node-name": "nbd0" }
+#              ] } }
+#     <- { "return": {} }
 #
 # Since: 6.0
 ##
@@ -105,13 +104,13 @@
 #
 # Returns: list of @YankInstance
 #
-# Example:
+# .. qmp-example::
 #
-# -> { "execute": "query-yank" }
-# <- { "return": [
-#          { "type": "block-node",
-#            "node-name": "nbd0" }
-#      ] }
+#     -> { "execute": "query-yank" }
+#     <- { "return": [
+#              { "type": "block-node",
+#                "node-name": "nbd0" }
+#          ] }
 #
 # Since: 6.0
 ##

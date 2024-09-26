@@ -244,6 +244,7 @@ static void r2d_init(MachineState *machine)
     SysBusDevice *busdev;
     MemoryRegion *address_space_mem = get_system_memory();
     PCIBus *pci_bus;
+    USBBus *usb_bus;
 
     cpu = SUPERH_CPU(cpu_create(machine->cpu_type));
     env = &cpu->env;
@@ -285,9 +286,9 @@ static void r2d_init(MachineState *machine)
     dinfo = drive_get(IF_IDE, 0, 0);
     dev = qdev_new("mmio-ide");
     busdev = SYS_BUS_DEVICE(dev);
-    sysbus_connect_irq(busdev, 0, irq[CF_IDE]);
     qdev_prop_set_uint32(dev, "shift", 1);
     sysbus_realize_and_unref(busdev, &error_fatal);
+    sysbus_connect_irq(busdev, 0, irq[CF_IDE]);
     sysbus_mmio_map(busdev, 0, 0x14001000);
     sysbus_mmio_map(busdev, 1, 0x1400080c);
     mmio_ide_init_drives(dev, dinfo, NULL);
@@ -312,7 +313,9 @@ static void r2d_init(MachineState *machine)
     pci_init_nic_devices(pci_bus, mc->default_nic);
 
     /* USB keyboard */
-    usb_create_simple(usb_bus_find(-1), "usb-kbd");
+    usb_bus = USB_BUS(object_resolve_type_unambiguous(TYPE_USB_BUS,
+                                                      &error_abort));
+    usb_create_simple(usb_bus, "usb-kbd");
 
     /* Todo: register on board registers */
     memset(&boot_params, 0, sizeof(boot_params));

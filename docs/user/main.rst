@@ -87,9 +87,6 @@ Debug options:
    Activate logging of the specified items (use '-d help' for a list of
    log items)
 
-``-p pagesize``
-   Act as if the host page size was 'pagesize' bytes
-
 ``-g port``
    Wait gdb connection to port
 
@@ -133,10 +130,6 @@ Other binaries
 
    The binary format is detected automatically.
 
--  user mode (Cris)
-
-   * ``qemu-cris`` TODO.
-
 -  user mode (i386)
 
    * ``qemu-i386`` TODO.
@@ -161,10 +154,6 @@ Other binaries
 
    * ``qemu-mipsn32el`` executes 32-bit little endian MIPS binaries (MIPS N32
      ABI).
-
--  user mode (NiosII)
-
-   * ``qemu-nios2`` TODO.
 
 -  user mode (PowerPC)
 

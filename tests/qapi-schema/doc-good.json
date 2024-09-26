@@ -9,7 +9,9 @@
 
 ##
 # = Section
-#
+##
+
+##
 # == Subsection
 #
 # *with emphasis*
@@ -52,6 +54,8 @@
 # - *verbatim*
 # - {braces}
 ##
+
+# Not a doc comment
 
 ##
 # @Enum:
@@ -152,22 +156,39 @@
 # Features:
 # @cmd-feat1: a feature
 # @cmd-feat2: another feature
-# Note: @arg3 is undocumented
+#
+# .. note:: @arg3 is undocumented
+#
 # Returns: @Object
+#
+# Errors: some
+#
 # TODO: frobnicate
-# Notes:
+#
+# .. admonition:: Notes
 #
 #  - Lorem ipsum dolor sit amet
 #  - Ut enim ad minim veniam
 #
 #  Duis aute irure dolor
-# Example:
 #
-# -> in
-# <- out
-# Examples:
-# - *verbatim*
-# - {braces}
+# .. qmp-example::
+#    :title: Ideal fast-food burger situation
+#
+#    -> "in"
+#    <- "out"
+#
+# Examples::
+#
+#  - Not a QMP code block
+#  - Merely a preformatted code block literal
+#  It isn't even an rST list.
+#  - *verbatim*
+#  - {braces}
+#
+# Note::
+#     Ceci n'est pas une note
+#
 # Since: 2.10
 ##
 { 'command': 'cmd',
@@ -178,14 +199,16 @@
 ##
 # @cmd-boxed:
 # If you're bored enough to read this, go see a video of boxed cats
+#
 # Features:
 # @cmd-feat1: a feature
 # @cmd-feat2: another feature
-# Example:
 #
-# -> in
+# .. qmp-example::
 #
-# <- out
+#    -> "this example"
+#
+#    <- "has no title"
 ##
 { 'command': 'cmd-boxed', 'boxed': true,
   'data': 'Object',

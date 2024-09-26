@@ -88,6 +88,7 @@ static uint32_t virtio_mem_default_thp_size(void)
 static uint32_t thp_size;
 
 #define HPAGE_PMD_SIZE_PATH "/sys/kernel/mm/transparent_hugepage/hpage_pmd_size"
+#define HPAGE_PATH "/sys/kernel/mm/transparent_hugepage/"
 static uint32_t virtio_mem_thp_size(void)
 {
     gchar *content = NULL;
@@ -95,6 +96,12 @@ static uint32_t virtio_mem_thp_size(void)
     uint64_t tmp;
 
     if (thp_size) {
+        return thp_size;
+    }
+
+    /* No THP -> no restrictions. */
+    if (!g_file_test(HPAGE_PATH, G_FILE_TEST_EXISTS)) {
+        thp_size = VIRTIO_MEM_MIN_BLOCK_SIZE;
         return thp_size;
     }
 
@@ -1832,8 +1839,8 @@ static void virtio_mem_unplug_request_check(VirtIOMEM *vmem, Error **errp)
     }
 
     if (vmem->size) {
-        error_setg(errp, "virtio-mem device cannot get unplugged while"
-                   " '" VIRTIO_MEM_SIZE_PROP "' != '0'");
+        error_setg(errp, "virtio-mem device cannot get unplugged while some"
+                   " of its memory is still plugged");
         return;
     }
     if (vmem->requested_size) {

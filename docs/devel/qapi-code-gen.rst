@@ -899,7 +899,7 @@ Documentation markup
 ~~~~~~~~~~~~~~~~~~~~
 
 Documentation comments can use most rST markup.  In particular,
-a ``::`` literal block can be used for examples::
+a ``::`` literal block can be used for pre-formatted text::
 
     # ::
     #
@@ -973,7 +973,7 @@ commands and events), member (for structs and unions), branch (for
 alternates), or value (for enums), a description of each feature (if
 any), and finally optional tagged sections.
 
-Descriptions start with '\@name:'.  The description text should be
+Descriptions start with '\@name:'.  The description text must be
 indented like this::
 
  # @name: Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed
@@ -986,35 +986,86 @@ indented like this::
 Extensions added after the definition was first released carry a
 "(since x.y.z)" comment.
 
-The feature descriptions must be preceded by a line "Features:", like
-this::
+The feature descriptions must be preceded by a blank line and then a
+line "Features:", like this::
 
+  #
   # Features:
   #
   # @feature: Description text
 
-A tagged section starts with one of the following words:
-"Note:"/"Notes:", "Since:", "Example:"/"Examples:", "Returns:",
-"TODO:".  The section ends with the start of a new section.
+A tagged section begins with a paragraph that starts with one of the
+following words: "Since:", "Returns:", "Errors:", "TODO:".  It ends with
+the start of a new section.
 
-The second and subsequent lines of sections other than
-"Example"/"Examples" should be indented like this::
+The second and subsequent lines of tagged sections must be indented
+like this::
 
- # Note: Ut enim ad minim veniam, quis nostrud exercitation ullamco
+ # TODO: Ut enim ad minim veniam, quis nostrud exercitation ullamco
  #     laboris nisi ut aliquip ex ea commodo consequat.
  #
  #     Duis aute irure dolor in reprehenderit in voluptate velit esse
  #     cillum dolore eu fugiat nulla pariatur.
 
+"Returns" and "Errors" sections are only valid for commands.  They
+document the success and the error response, respectively.
+
+"Errors" sections should be formatted as an rST list, each entry
+detailing a relevant error condition. For example::
+
+ # Errors:
+ #     - If @device does not exist, DeviceNotFound
+ #     - Any other error returns a GenericError.
+
 A "Since: x.y.z" tagged section lists the release that introduced the
 definition.
 
-An "Example" or "Examples" section is rendered entirely
-as literal fixed-width text.  "TODO" sections are not rendered at all
-(they are for developers, not users of QMP).  In other sections, the
-text is formatted, and rST markup can be used.
+"TODO" sections are not rendered (they are for developers, not users of
+QMP).  In other sections, the text is formatted, and rST markup can be
+used.
+
+QMP Examples can be added by using the ``.. qmp-example::``
+directive. In its simplest form, this can be used to contain a single
+QMP code block which accepts standard JSON syntax with additional server
+directionality indicators (``->`` and ``<-``), and elisions (``...``).
+
+Optionally, a plaintext title may be provided by using the ``:title:``
+directive option. If the title is omitted, the example title will
+default to "Example:".
+
+A simple QMP example::
+
+  # .. qmp-example::
+  #    :title: Using query-block
+  #
+  #    -> { "execute": "query-block" }
+  #    <- { ... }
+
+More complex or multi-step examples where exposition is needed before or
+between QMP code blocks can be created by using the ``:annotated:``
+directive option. When using this option, nested QMP code blocks must be
+entered explicitly with rST's ``::`` syntax.
+
+Highlighting in non-QMP languages can be accomplished by using the
+``.. code-block:: lang`` directive, and non-highlighted text can be
+achieved by omitting the language argument.
 
 For example::
+
+  # .. qmp-example::
+  #    :annotated:
+  #    :title: A more complex demonstration
+  #
+  #    This is a more complex example that can use
+  #    ``arbitrary rST syntax`` in its exposition::
+  #
+  #      -> { "execute": "query-block" }
+  #      <- { ... }
+  #
+  #    Above, lengthy output has been omitted for brevity.
+
+
+Examples of complete definition documentation::
 
  ##
  # @BlockStats:
@@ -1047,13 +1098,12 @@ For example::
  #
  # Since: 0.14
  #
- # Example:
+ # .. qmp-example::
  #
- # -> { "execute": "query-blockstats" }
- # <- {
- #      ... lots of output ...
- #    }
- #
+ #     -> { "execute": "query-blockstats" }
+ #     <- {
+ #          ...
+ #        }
  ##
  { 'command': 'query-blockstats',
    'data': { '*query-nodes': 'bool' },
@@ -1087,8 +1137,10 @@ need to line up with each other, like this::
  #     or cache associativity unknown)
  #     (since 5.0)
 
-Section tags are case-sensitive and end with a colon.  Good example::
+Section tags are case-sensitive and end with a colon.  They are only
+recognized after a blank line.  Good example::
 
+ #
  # Since: 7.1
 
 Bad examples (all ordinary paragraphs)::

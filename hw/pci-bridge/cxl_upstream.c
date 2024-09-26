@@ -192,8 +192,8 @@ enum {
 
 static int build_cdat_table(CDATSubHeader ***cdat_table, void *priv)
 {
-    g_autofree CDATSslbis *sslbis_latency = NULL;
-    g_autofree CDATSslbis *sslbis_bandwidth = NULL;
+    CDATSslbis *sslbis_latency;
+    CDATSslbis *sslbis_bandwidth;
     CXLUpstreamPort *us = CXL_USP(priv);
     PCIBus *bus = &PCI_BRIDGE(us)->sec_bus;
     int devfn, sslbis_size, i;
@@ -234,7 +234,7 @@ static int build_cdat_table(CDATSubHeader ***cdat_table, void *priv)
                 .type = CDAT_TYPE_SSLBIS,
                 .length = sslbis_size,
             },
-            .data_type = HMATLB_DATA_TYPE_ACCESS_LATENCY,
+            .data_type = HMAT_LB_DATA_TYPE_ACCESS_LATENCY,
             .entry_base_unit = 10000,
         },
     };
@@ -254,7 +254,7 @@ static int build_cdat_table(CDATSubHeader ***cdat_table, void *priv)
                 .type = CDAT_TYPE_SSLBIS,
                 .length = sslbis_size,
             },
-            .data_type = HMATLB_DATA_TYPE_ACCESS_BANDWIDTH,
+            .data_type = HMAT_LB_DATA_TYPE_ACCESS_BANDWIDTH,
             .entry_base_unit = 1024,
         },
     };
@@ -270,8 +270,8 @@ static int build_cdat_table(CDATSubHeader ***cdat_table, void *priv)
     *cdat_table = g_new0(CDATSubHeader *, CXL_USP_CDAT_NUM_ENTRIES);
 
     /* Header always at start of structure */
-    (*cdat_table)[CXL_USP_CDAT_SSLBIS_LAT] = g_steal_pointer(&sslbis_latency);
-    (*cdat_table)[CXL_USP_CDAT_SSLBIS_BW] = g_steal_pointer(&sslbis_bandwidth);
+    (*cdat_table)[CXL_USP_CDAT_SSLBIS_LAT] = (CDATSubHeader *)sslbis_latency;
+    (*cdat_table)[CXL_USP_CDAT_SSLBIS_BW] = (CDATSubHeader *)sslbis_bandwidth;
 
     return CXL_USP_CDAT_NUM_ENTRIES;
 }
@@ -289,6 +289,7 @@ static void free_default_cdat_table(CDATSubHeader **cdat_table, int num,
 
 static void cxl_usp_realize(PCIDevice *d, Error **errp)
 {
+    ERRP_GUARD();
     PCIEPort *p = PCIE_PORT(d);
     CXLUpstreamPort *usp = CXL_USP(d);
     CXLComponentState *cxl_cstate = &usp->cxl_cstate;
@@ -337,8 +338,7 @@ static void cxl_usp_realize(PCIDevice *d, Error **errp)
     cxl_cstate->cdat.build_cdat_table = build_cdat_table;
     cxl_cstate->cdat.free_cdat_table = free_default_cdat_table;
     cxl_cstate->cdat.private = d;
-    cxl_doe_cdat_init(cxl_cstate, errp);
-    if (*errp) {
+    if (!cxl_doe_cdat_init(cxl_cstate, errp)) {
         goto err_cap;
     }
 
@@ -380,7 +380,7 @@ static void cxl_upstream_class_init(ObjectClass *oc, void *data)
     k->revision = 0;
     set_bit(DEVICE_CATEGORY_BRIDGE, dc->categories);
     dc->desc = "CXL Switch Upstream Port";
-    dc->reset = cxl_usp_reset;
+    device_class_set_legacy_reset(dc, cxl_usp_reset);
     device_class_set_props(dc, cxl_upstream_props);
 }
 

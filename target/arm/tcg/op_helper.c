@@ -409,6 +409,60 @@ void HELPER(wfi)(CPUARMState *env, uint32_t insn_len)
 #endif
 }
 
+void HELPER(wfit)(CPUARMState *env, uint64_t timeout)
+{
+#ifdef CONFIG_USER_ONLY
+    /*
+     * WFI in the user-mode emulator is technically permitted but not
+     * something any real-world code would do. AArch64 Linux kernels
+     * trap it via SCTRL_EL1.nTWI and make it an (expensive) NOP;
+     * AArch32 kernels don't trap it so it will delay a bit.
+     * For QEMU, make it NOP here, because trying to raise EXCP_HLT
+     * would trigger an abort.
+     */
+    return;
+#else
+    ARMCPU *cpu = env_archcpu(env);
+    CPUState *cs = env_cpu(env);
+    int target_el = check_wfx_trap(env, false);
+    /* The WFIT should time out when CNTVCT_EL0 >= the specified value. */
+    uint64_t cntval = gt_get_countervalue(env);
+    uint64_t offset = gt_virt_cnt_offset(env);
+    uint64_t cntvct = cntval - offset;
+    uint64_t nexttick;
+
+    if (cpu_has_work(cs) || cntvct >= timeout) {
+        /*
+         * Don't bother to go into our "low power state" if
+         * we would just wake up immediately.
+         */
+        return;
+    }
+
+    if (target_el) {
+        env->pc -= 4;
+        raise_exception(env, EXCP_UDEF, syn_wfx(1, 0xe, 0, false),
+                        target_el);
+    }
+
+    if (uadd64_overflow(timeout, offset, &nexttick)) {
+        nexttick = UINT64_MAX;
+    }
+    if (nexttick > INT64_MAX / gt_cntfrq_period_ns(cpu)) {
+        /*
+         * If the timeout is too long for the signed 64-bit range
+         * of a QEMUTimer, let it expire early.
+         */
+        timer_mod_ns(cpu->wfxt_timer, INT64_MAX);
+    } else {
+        timer_mod(cpu->wfxt_timer, nexttick);
+    }
+    cs->exception_index = EXCP_HLT;
+    cs->halted = 1;
+    cpu_loop_exit(cs);
+#endif
+}
+
 void HELPER(wfe)(CPUARMState *env)
 {
     /* This is a hint instruction that is semantically different
@@ -570,10 +624,24 @@ static void msr_mrs_banked_exc_checks(CPUARMState *env, uint32_t tgtmode,
      */
     int curmode = env->uncached_cpsr & CPSR_M;
 
-    if (regno == 17) {
-        /* ELR_Hyp: a special case because access from tgtmode is OK */
-        if (curmode != ARM_CPU_MODE_HYP && curmode != ARM_CPU_MODE_MON) {
-            goto undef;
+    if (tgtmode == ARM_CPU_MODE_HYP) {
+        /*
+         * Handle Hyp target regs first because some are special cases
+         * which don't want the usual "not accessible from tgtmode" check.
+         */
+        switch (regno) {
+        case 16 ... 17: /* ELR_Hyp, SPSR_Hyp */
+            if (curmode != ARM_CPU_MODE_HYP && curmode != ARM_CPU_MODE_MON) {
+                goto undef;
+            }
+            break;
+        case 13:
+            if (curmode != ARM_CPU_MODE_MON) {
+                goto undef;
+            }
+            break;
+        default:
+            g_assert_not_reached();
         }
         return;
     }
@@ -604,13 +672,6 @@ static void msr_mrs_banked_exc_checks(CPUARMState *env, uint32_t tgtmode,
         }
     }
 
-    if (tgtmode == ARM_CPU_MODE_HYP) {
-        /* SPSR_Hyp, r13_hyp: accessible from Monitor mode only */
-        if (curmode != ARM_CPU_MODE_MON) {
-            goto undef;
-        }
-    }
-
     return;
 
 undef:
@@ -625,7 +686,12 @@ void HELPER(msr_banked)(CPUARMState *env, uint32_t value, uint32_t tgtmode,
 
     switch (regno) {
     case 16: /* SPSRs */
-        env->banked_spsr[bank_number(tgtmode)] = value;
+        if (tgtmode == (env->uncached_cpsr & CPSR_M)) {
+            /* Only happens for SPSR_Hyp access in Hyp mode */
+            env->spsr = value;
+        } else {
+            env->banked_spsr[bank_number(tgtmode)] = value;
+        }
         break;
     case 17: /* ELR_Hyp */
         env->elr_el[2] = value;
@@ -659,7 +725,12 @@ uint32_t HELPER(mrs_banked)(CPUARMState *env, uint32_t tgtmode, uint32_t regno)
 
     switch (regno) {
     case 16: /* SPSRs */
-        return env->banked_spsr[bank_number(tgtmode)];
+        if (tgtmode == (env->uncached_cpsr & CPSR_M)) {
+            /* Only happens for SPSR_Hyp access in Hyp mode */
+            return env->spsr;
+        } else {
+            return env->banked_spsr[bank_number(tgtmode)];
+        }
     case 17: /* ELR_Hyp */
         return env->elr_el[2];
     case 13:

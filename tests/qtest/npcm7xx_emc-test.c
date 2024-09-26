@@ -228,7 +228,10 @@ static int *packet_test_init(int module_num, GString *cmd_line)
      * KISS and use -nic. The driver accepts 'emc0' and 'emc1' as aliases
      * in the 'model' field to specify the device to match.
      */
-    g_string_append_printf(cmd_line, " -nic socket,fd=%d,model=emc%d ",
+    g_string_append_printf(cmd_line, " -nic socket,fd=%d,model=emc%d "
+                           "-nic user,model=npcm7xx-emc "
+                           "-nic user,model=npcm-gmac "
+                           "-nic user,model=npcm-gmac",
                            test_sockets[1], module_num);
 
     g_test_queue_destroy(packet_test_clear, test_sockets);
@@ -786,7 +789,7 @@ static void emc_test_ptle(QTestState *qts, const EMCModule *mod, int fd)
 static void test_tx(gconstpointer test_data)
 {
     const TestData *td = test_data;
-    GString *cmd_line = g_string_new("-machine quanta-gsj");
+    g_autoptr(GString) cmd_line = g_string_new("-machine quanta-gsj");
     int *test_sockets = packet_test_init(emc_module_index(td->module),
                                          cmd_line);
     QTestState *qts = qtest_init(cmd_line->str);
@@ -811,7 +814,7 @@ static void test_tx(gconstpointer test_data)
 static void test_rx(gconstpointer test_data)
 {
     const TestData *td = test_data;
-    GString *cmd_line = g_string_new("-machine quanta-gsj");
+    g_autoptr(GString) cmd_line = g_string_new("-machine quanta-gsj");
     int *test_sockets = packet_test_init(emc_module_index(td->module),
                                          cmd_line);
     QTestState *qts = qtest_init(cmd_line->str);

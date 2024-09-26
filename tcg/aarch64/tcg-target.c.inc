@@ -1388,8 +1388,7 @@ static void tcg_out_cmp(TCGContext *s, TCGType ext, TCGCond cond, TCGReg a,
         if (!const_b) {
             tcg_out_insn(s, 3510, ANDS, ext, TCG_REG_XZR, a, b);
         } else {
-            tcg_debug_assert(is_limm(b));
-            tcg_out_logicali(s, I3404_ANDSI, 0, TCG_REG_XZR, a, b);
+            tcg_out_logicali(s, I3404_ANDSI, ext, TCG_REG_XZR, a, b);
         }
     } else {
         if (!const_b) {
@@ -1465,6 +1464,7 @@ static void tcg_out_brcond(TCGContext *s, TCGType ext, TCGCond c, TCGArg a,
     case TCG_COND_TSTNE:
         /* tst xN,0xffffffff; b.ne L -> cbnz wN,L */
         if (b_const && b == UINT32_MAX) {
+            c = tcg_tst_eqne_cond(c);
             ext = TCG_TYPE_I32;
             need_cmp = false;
             break;
@@ -2737,7 +2737,8 @@ static void tcg_out_vec_op(TCGContext *s, TCGOpcode opc,
             TCGCond cond = args[3];
             AArch64Insn insn;
 
-            if (cond == TCG_COND_NE) {
+            switch (cond) {
+            case TCG_COND_NE:
                 if (const_args[2]) {
                     if (is_scalar) {
                         tcg_out_insn(s, 3611, CMTST, vece, a0, a1, a1);
@@ -2752,7 +2753,27 @@ static void tcg_out_vec_op(TCGContext *s, TCGOpcode opc,
                     }
                     tcg_out_insn(s, 3617, NOT, is_q, 0, a0, a0);
                 }
-            } else {
+                break;
+
+            case TCG_COND_TSTNE:
+            case TCG_COND_TSTEQ:
+                if (const_args[2]) {
+                    /* (x & 0) == 0 */
+                    tcg_out_dupi_vec(s, type, MO_8, a0,
+                                     -(cond == TCG_COND_TSTEQ));
+                    break;
+                }
+                if (is_scalar) {
+                    tcg_out_insn(s, 3611, CMTST, vece, a0, a1, a2);
+                } else {
+                    tcg_out_insn(s, 3616, CMTST, is_q, vece, a0, a1, a2);
+                }
+                if (cond == TCG_COND_TSTEQ) {
+                    tcg_out_insn(s, 3617, NOT, is_q, 0, a0, a0);
+                }
+                break;
+
+            default:
                 if (const_args[2]) {
                     if (is_scalar) {
                         insn = cmp0_scalar_insn[cond];
@@ -2791,6 +2812,7 @@ static void tcg_out_vec_op(TCGContext *s, TCGOpcode opc,
                     }
                     tcg_out_insn_3616(s, insn, is_q, vece, a0, a1, a2);
                 }
+                break;
             }
         }
         break;

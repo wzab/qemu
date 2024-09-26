@@ -385,5 +385,11 @@
 #define __NR_futex_wake (__NR_Linux + 454)
 #define __NR_futex_wait (__NR_Linux + 455)
 #define __NR_futex_requeue (__NR_Linux + 456)
+#define __NR_statmount (__NR_Linux + 457)
+#define __NR_listmount (__NR_Linux + 458)
+#define __NR_lsm_get_self_attr (__NR_Linux + 459)
+#define __NR_lsm_set_self_attr (__NR_Linux + 460)
+#define __NR_lsm_list_modules (__NR_Linux + 461)
+#define __NR_mseal (__NR_Linux + 462)
 
 #endif /* _ASM_UNISTD_N32_H */

@@ -16,11 +16,6 @@
 #define TARGET_PHYS_MASK MAKE_64BIT_MASK(0, TARGET_PHYS_ADDR_SPACE_BITS)
 #define TARGET_VIRT_MASK MAKE_64BIT_MASK(0, TARGET_VIRT_ADDR_SPACE_BITS)
 
-/* Global bit used for lddir/ldpte */
-#define LOONGARCH_PAGE_HUGE_SHIFT   6
-/* Global bit for huge page */
-#define LOONGARCH_HGLOBAL_SHIFT     12
-
 void loongarch_translate_init(void);
 
 void loongarch_cpu_dump_state(CPUState *cpu, FILE *f, int flags);
@@ -77,5 +72,7 @@ void write_fcc(CPULoongArchState *env, uint64_t val);
 int loongarch_cpu_gdb_read_register(CPUState *cs, GByteArray *mem_buf, int n);
 int loongarch_cpu_gdb_write_register(CPUState *cs, uint8_t *mem_buf, int n);
 void loongarch_cpu_register_gdb_regs_for_features(CPUState *cs);
+int loongarch_cpu_write_elf64_note(WriteCoreDumpFunction f, CPUState *cpu,
+                                   int cpuid, DumpState *s);
 
 #endif

@@ -2362,7 +2362,7 @@ static void vmbus_dev_class_init(ObjectClass *klass, void *data)
     kdev->bus_type = TYPE_VMBUS;
     kdev->realize = vmbus_dev_realize;
     kdev->unrealize = vmbus_dev_unrealize;
-    kdev->reset = vmbus_dev_reset;
+    device_class_set_legacy_reset(kdev, vmbus_dev_reset);
 }
 
 static void vmbus_dev_instance_init(Object *obj)
@@ -2453,7 +2453,7 @@ static void vmbus_unrealize(BusState *bus)
     qemu_mutex_destroy(&vmbus->rx_queue_lock);
 }
 
-static void vmbus_reset_hold(Object *obj)
+static void vmbus_reset_hold(Object *obj, ResetType type)
 {
     vmbus_deinit(VMBUS(obj));
 }
@@ -2629,6 +2629,12 @@ static void vmbus_bridge_realize(DeviceState *dev, Error **errp)
     if (!hyperv_is_synic_enabled()) {
         error_report("VMBus requires usable Hyper-V SynIC and VP_INDEX");
         return;
+    }
+
+    if (!hyperv_are_vmbus_recommended_features_enabled()) {
+        warn_report("VMBus enabled without the recommended set of Hyper-V features: "
+                    "hv-stimer, hv-vapic and hv-runtime. "
+                    "Some Windows versions might not boot or enable the VMBus device");
     }
 
     bridge->bus = VMBUS(qbus_new(TYPE_VMBUS, dev, "vmbus"));

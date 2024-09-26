@@ -21,8 +21,8 @@
 #     backend (e.g. with the chardev=... option) is in open or closed
 #     state (since 2.1)
 #
-# Notes: @filename is encoded using the QEMU command line character
-#     device encoding.  See the QEMU man page for details.
+# .. note:: @filename is encoded using the QEMU command line character
+#    device encoding.  See the QEMU man page for details.
 #
 # Since: 0.14
 ##
@@ -40,28 +40,28 @@
 #
 # Since: 0.14
 #
-# Example:
+# .. qmp-example::
 #
-# -> { "execute": "query-chardev" }
-# <- {
-#       "return": [
-#          {
-#             "label": "charchannel0",
-#             "filename": "unix:/var/lib/libvirt/qemu/seabios.rhel6.agent,server=on",
-#             "frontend-open": false
-#          },
-#          {
-#             "label": "charmonitor",
-#             "filename": "unix:/var/lib/libvirt/qemu/seabios.rhel6.monitor,server=on",
-#             "frontend-open": true
-#          },
-#          {
-#             "label": "charserial0",
-#             "filename": "pty:/dev/pts/2",
-#             "frontend-open": true
-#          }
-#       ]
-#    }
+#     -> { "execute": "query-chardev" }
+#     <- {
+#           "return": [
+#              {
+#                 "label": "charchannel0",
+#                 "filename": "unix:/var/lib/libvirt/qemu/seabios.rhel6.agent,server=on",
+#                 "frontend-open": false
+#              },
+#              {
+#                 "label": "charmonitor",
+#                 "filename": "unix:/var/lib/libvirt/qemu/seabios.rhel6.monitor,server=on",
+#                 "frontend-open": true
+#              },
+#              {
+#                 "label": "charserial0",
+#                 "filename": "pty:/dev/pts/2",
+#                 "frontend-open": true
+#              }
+#           ]
+#        }
 ##
 { 'command': 'query-chardev', 'returns': ['ChardevInfo'],
   'allow-preconfig': true }
@@ -86,25 +86,25 @@
 #
 # Since: 2.0
 #
-# Example:
+# .. qmp-example::
 #
-# -> { "execute": "query-chardev-backends" }
-# <- {
-#       "return":[
-#          {
-#             "name":"udp"
-#          },
-#          {
-#             "name":"tcp"
-#          },
-#          {
-#             "name":"unix"
-#          },
-#          {
-#             "name":"spiceport"
-#          }
-#       ]
-#    }
+#     -> { "execute": "query-chardev-backends" }
+#     <- {
+#           "return":[
+#              {
+#                 "name":"udp"
+#              },
+#              {
+#                 "name":"tcp"
+#              },
+#              {
+#                 "name":"unix"
+#              },
+#              {
+#                 "name":"spiceport"
+#              }
+#           ]
+#        }
 ##
 { 'command': 'query-chardev-backends', 'returns': ['ChardevBackendInfo'] }
 
@@ -139,17 +139,15 @@
 #     - data itself is always Unicode regardless of format, like any
 #       other string.
 #
-# Returns: Nothing on success
-#
 # Since: 1.4
 #
-# Example:
+# .. qmp-example::
 #
-# -> { "execute": "ringbuf-write",
-#      "arguments": { "device": "foo",
-#                     "data": "abcdefgh",
-#                     "format": "utf8" } }
-# <- { "return": {} }
+#     -> { "execute": "ringbuf-write",
+#          "arguments": { "device": "foo",
+#                         "data": "abcdefgh",
+#                         "format": "utf8" } }
+#     <- { "return": {} }
 ##
 { 'command': 'ringbuf-write',
   'data': { 'device': 'str',
@@ -179,13 +177,13 @@
 #
 # Since: 1.4
 #
-# Example:
+# .. qmp-example::
 #
-# -> { "execute": "ringbuf-read",
-#      "arguments": { "device": "foo",
-#                     "size": 1000,
-#                     "format": "utf8" } }
-# <- { "return": "abcdefgh" }
+#     -> { "execute": "ringbuf-read",
+#          "arguments": { "device": "foo",
+#                         "size": 1000,
+#                         "format": "utf8" } }
+#     <- { "return": "abcdefgh" }
 ##
 { 'command': 'ringbuf-read',
   'data': {'device': 'str', 'size': 'int', '*format': 'DataFormat'},
@@ -260,7 +258,7 @@
 # @server: create server socket (default: true)
 #
 # @wait: wait for incoming connection on server sockets (default:
-#     false). Silently ignored with server: false.  This use is
+#     false).  Silently ignored with server: false.  This use is
 #     deprecated.
 #
 # @nodelay: set TCP_NODELAY socket option (default: false)
@@ -390,9 +388,9 @@
 #
 # @rows: console height, in chars
 #
-# Note: the options are only effective when the VNC or SDL graphical
-#     display backend is active.  They are ignored with the GTK,
-#     Spice, VNC and D-Bus display backends.
+# .. note:: The options are only effective when the VNC or SDL
+#    graphical display backend is active.  They are ignored with the
+#    GTK, Spice, VNC and D-Bus display backends.
 #
 # Since: 1.5
 ##
@@ -701,23 +699,27 @@
 #
 # Since: 1.4
 #
-# Examples:
+# .. qmp-example::
 #
-# -> { "execute" : "chardev-add",
-#      "arguments" : { "id" : "foo",
-#                      "backend" : { "type" : "null", "data" : {} } } }
-# <- { "return": {} }
+#     -> { "execute" : "chardev-add",
+#          "arguments" : { "id" : "foo",
+#                          "backend" : { "type" : "null", "data" : {} } } }
+#     <- { "return": {} }
 #
-# -> { "execute" : "chardev-add",
-#      "arguments" : { "id" : "bar",
-#                      "backend" : { "type" : "file",
-#                                    "data" : { "out" : "/tmp/bar.log" } } } }
-# <- { "return": {} }
+# .. qmp-example::
 #
-# -> { "execute" : "chardev-add",
-#      "arguments" : { "id" : "baz",
-#                      "backend" : { "type" : "pty", "data" : {} } } }
-# <- { "return": { "pty" : "/dev/pty/42" } }
+#     -> { "execute" : "chardev-add",
+#          "arguments" : { "id" : "bar",
+#                          "backend" : { "type" : "file",
+#                                        "data" : { "out" : "/tmp/bar.log" } } } }
+#     <- { "return": {} }
+#
+# .. qmp-example::
+#
+#     -> { "execute" : "chardev-add",
+#          "arguments" : { "id" : "baz",
+#                          "backend" : { "type" : "pty", "data" : {} } } }
+#     <- { "return": { "pty" : "/dev/pty/42" } }
 ##
 { 'command': 'chardev-add',
   'data': { 'id': 'str',
@@ -737,28 +739,30 @@
 #
 # Since: 2.10
 #
-# Examples:
+# .. qmp-example::
 #
-# -> { "execute" : "chardev-change",
-#      "arguments" : { "id" : "baz",
-#                      "backend" : { "type" : "pty", "data" : {} } } }
-# <- { "return": { "pty" : "/dev/pty/42" } }
+#     -> { "execute" : "chardev-change",
+#          "arguments" : { "id" : "baz",
+#                          "backend" : { "type" : "pty", "data" : {} } } }
+#     <- { "return": { "pty" : "/dev/pty/42" } }
 #
-# -> {"execute" : "chardev-change",
-#     "arguments" : {
-#         "id" : "charchannel2",
-#         "backend" : {
-#             "type" : "socket",
-#             "data" : {
-#                 "addr" : {
-#                     "type" : "unix" ,
-#                     "data" : {
-#                         "path" : "/tmp/charchannel2.socket"
-#                     }
-#                  },
-#                  "server" : true,
-#                  "wait" : false }}}}
-# <- {"return": {}}
+# .. qmp-example::
+#
+#     -> {"execute" : "chardev-change",
+#         "arguments" : {
+#             "id" : "charchannel2",
+#             "backend" : {
+#                 "type" : "socket",
+#                 "data" : {
+#                     "addr" : {
+#                         "type" : "unix" ,
+#                         "data" : {
+#                             "path" : "/tmp/charchannel2.socket"
+#                         }
+#                      },
+#                      "server" : true,
+#                      "wait" : false }}}}
+#     <- {"return": {}}
 ##
 { 'command': 'chardev-change',
   'data': { 'id': 'str',
@@ -772,14 +776,12 @@
 #
 # @id: the chardev's ID, must exist and not be in use
 #
-# Returns: Nothing on success
-#
 # Since: 1.4
 #
-# Example:
+# .. qmp-example::
 #
-# -> { "execute": "chardev-remove", "arguments": { "id" : "foo" } }
-# <- { "return": {} }
+#     -> { "execute": "chardev-remove", "arguments": { "id" : "foo" } }
+#     <- { "return": {} }
 ##
 { 'command': 'chardev-remove',
   'data': { 'id': 'str' } }
@@ -791,14 +793,12 @@
 #
 # @id: the chardev's ID, must exist
 #
-# Returns: Nothing on success
-#
 # Since: 2.10
 #
-# Example:
+# .. qmp-example::
 #
-# -> { "execute": "chardev-send-break", "arguments": { "id" : "foo" } }
-# <- { "return": {} }
+#     -> { "execute": "chardev-send-break", "arguments": { "id" : "foo" } }
+#     <- { "return": {} }
 ##
 { 'command': 'chardev-send-break',
   'data': { 'id': 'str' } }
@@ -812,15 +812,15 @@
 #
 # @open: true if the guest has opened the virtio-serial port
 #
-# Note: This event is rate-limited.
+# .. note:: This event is rate-limited.
 #
 # Since: 2.1
 #
-# Example:
+# .. qmp-example::
 #
-# <- { "event": "VSERPORT_CHANGE",
-#      "data": { "id": "channel0", "open": true },
-#      "timestamp": { "seconds": 1401385907, "microseconds": 422329 } }
+#     <- { "event": "VSERPORT_CHANGE",
+#          "data": { "id": "channel0", "open": true },
+#          "timestamp": { "seconds": 1401385907, "microseconds": 422329 } }
 ##
 { 'event': 'VSERPORT_CHANGE',
   'data': { 'id': 'str',

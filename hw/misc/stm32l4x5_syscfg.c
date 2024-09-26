@@ -27,6 +27,7 @@
 #include "hw/irq.h"
 #include "migration/vmstate.h"
 #include "hw/misc/stm32l4x5_syscfg.h"
+#include "hw/gpio/stm32l4x5_gpio.h"
 
 #define SYSCFG_MEMRMP 0x00
 #define SYSCFG_CFGR1 0x04
@@ -64,7 +65,7 @@
 
 #define NUM_LINES_PER_EXTICR_REG 4
 
-static void stm32l4x5_syscfg_hold_reset(Object *obj)
+static void stm32l4x5_syscfg_hold_reset(Object *obj, ResetType type)
 {
     Stm32l4x5SyscfgState *s = STM32L4X5_SYSCFG(obj);
 

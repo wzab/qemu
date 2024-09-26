@@ -30,7 +30,7 @@
 #include "hw/boards.h"
 #include "qemu/error-report.h"
 #include "hw/char/pl011.h"
-#include "hw/ide/ahci.h"
+#include "hw/ide/ahci-sysbus.h"
 #include "hw/cpu/a9mpcore.h"
 #include "hw/cpu/a15mpcore.h"
 #include "qemu/log.h"
@@ -145,7 +145,7 @@ static void highbank_regs_class_init(ObjectClass *klass, void *data)
 
     dc->desc = "Calxeda Highbank registers";
     dc->vmsd = &vmstate_highbank_regs;
-    dc->reset = highbank_regs_reset;
+    device_class_set_legacy_reset(dc, highbank_regs_reset);
 }
 
 static const TypeInfo highbank_regs_info = {

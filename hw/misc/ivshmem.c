@@ -832,6 +832,7 @@ static void ivshmem_write_config(PCIDevice *pdev, uint32_t address,
 
 static void ivshmem_common_realize(PCIDevice *dev, Error **errp)
 {
+    ERRP_GUARD();
     IVShmemState *s = IVSHMEM_COMMON(dev);
     Error *err = NULL;
     uint8_t *pci_conf;
@@ -990,7 +991,7 @@ static void ivshmem_common_class_init(ObjectClass *klass, void *data)
     k->device_id = PCI_DEVICE_ID_IVSHMEM;
     k->class_id = PCI_CLASS_MEMORY_RAM;
     k->revision = 1;
-    dc->reset = ivshmem_reset;
+    device_class_set_legacy_reset(dc, ivshmem_reset);
     set_bit(DEVICE_CATEGORY_MISC, dc->categories);
     dc->desc = "Inter-VM shared memory";
 }

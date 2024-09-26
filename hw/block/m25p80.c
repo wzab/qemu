@@ -267,6 +267,9 @@ static const FlashPartInfo known_devices[] = {
     { INFO("mt25ql512ab", 0x20ba20, 0x1044, 64 << 10, 1024, ER_4K | ER_32K) },
     { INFO_STACKED("mt35xu01g", 0x2c5b1b, 0x104100, 128 << 10, 1024,
                    ER_4K | ER_32K, 2) },
+    { INFO_STACKED("mt35xu02gbba", 0x2c5b1c, 0x104100, 128 << 10, 2048,
+                   ER_4K | ER_32K, 4),
+                   .sfdp_read = m25p80_sfdp_mt35xu02g },
     { INFO_STACKED("n25q00",    0x20ba21, 0x1000, 64 << 10, 2048, ER_4K, 4) },
     { INFO_STACKED("n25q00a",   0x20bb21, 0x1000, 64 << 10, 2048, ER_4K, 4) },
     { INFO_STACKED("mt25ql01g", 0x20ba21, 0x1040, 64 << 10, 2048, ER_4K, 2) },
@@ -354,6 +357,9 @@ static const FlashPartInfo known_devices[] = {
       .sfdp_read = m25p80_sfdp_w25q512jv },
     { INFO("w25q01jvq",   0xef4021,      0,  64 << 10, 2048, ER_4K),
       .sfdp_read = m25p80_sfdp_w25q01jvq },
+
+    /* Microchip */
+    { INFO("25csm04",      0x29cc00,      0x100,  64 << 10,  8, 0) },
 };
 
 typedef enum {
@@ -413,6 +419,7 @@ typedef enum {
     /*
      * Micron: 0x35 - enable QPI
      * Spansion: 0x35 - read control register
+     * Winbond: 0x35 - quad enable
      */
     RDCR_EQIO = 0x35,
     RSTQIO = 0xf5,
@@ -512,7 +519,6 @@ struct M25P80Class {
     FlashPartInfo *pi;
 };
 
-#define TYPE_M25P80 "m25p80-generic"
 OBJECT_DECLARE_TYPE(Flash, M25P80Class, M25P80)
 
 static inline Manufacturer get_man(Flash *s)
@@ -794,6 +800,11 @@ static void complete_collecting_data(Flash *s)
             if (s->len > 1) {
                 s->volatile_cfg = s->data[1];
                 s->four_bytes_address_mode = extract32(s->data[1], 5, 1);
+            }
+            break;
+        case MAN_WINBOND:
+            if (s->len > 1) {
+                s->quad_enable = !!(s->data[1] & 0x02);
             }
             break;
         default:
@@ -1252,6 +1263,10 @@ static void decode_new_cmd(Flash *s, uint32_t value)
             s->needed_bytes = 2;
             s->state = STATE_COLLECTING_VAR_LEN_DATA;
             break;
+        case MAN_WINBOND:
+            s->needed_bytes = 2;
+            s->state = STATE_COLLECTING_VAR_LEN_DATA;
+            break;
         default:
             s->needed_bytes = 1;
             s->state = STATE_COLLECTING_DATA;
@@ -1428,6 +1443,12 @@ static void decode_new_cmd(Flash *s, uint32_t value)
             break;
         case MAN_MACRONIX:
             s->quad_enable = true;
+            break;
+        case MAN_WINBOND:
+            s->data[0] = (!!s->quad_enable) << 1;
+            s->pos = 0;
+            s->len = 1;
+            s->state = STATE_READING_DATA;
             break;
         default:
             break;
@@ -1803,7 +1824,7 @@ static void m25p80_class_init(ObjectClass *klass, void *data)
     k->cs_polarity = SSI_CS_LOW;
     dc->vmsd = &vmstate_m25p80;
     device_class_set_props(dc, m25p80_properties);
-    dc->reset = m25p80_reset;
+    device_class_set_legacy_reset(dc, m25p80_reset);
     mc->pi = data;
 }
 
