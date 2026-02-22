@@ -182,14 +182,10 @@ static const MemMapEntry base_memmap[] = {
     [VIRT_GIC_ITS] =            { 0x08080000, 0x00020000 },
     /* This redistributor space allows up to 2*64kB*123 CPUs */
     [VIRT_GIC_REDIST] =         { 0x080A0000, 0x00F60000 },
-<<<<<<< ours
     [VIRT_UART0] =              { 0x09000000, 0x00001000 },
-=======
-    [VIRT_UART] =               { 0x09000000, 0x00001000 },
     [VIRT_WZENC1] =             { 0x09008000, 0x00001000 }, //Added by WZab!
     [VIRT_WZADC1] =             { 0x09009000, 0x00001000 }, //Added by WZab!
     [VIRT_WZTIM1] =             { 0x0900A000, 0x00001000 }, //Added by WZab!
->>>>>>> theirs
     [VIRT_RTC] =                { 0x09010000, 0x00001000 },
     [VIRT_FW_CFG] =             { 0x09020000, 0x00000018 },
     [VIRT_GPIO] =               { 0x09030000, 0x00001000 },
