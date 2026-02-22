@@ -157,7 +157,20 @@ specific_ss.add(when: 'CONFIG_MAC_VIA', if_true: files('mac_via.c'))
 specific_ss.add(when: 'CONFIG_MIPS_CPS', if_true: files('mips_cmgcr.c', 'mips_cpc.c'))
 specific_ss.add(when: 'CONFIG_MIPS_ITU', if_true: files('mips_itu.c'))
 
-system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
+specific_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
 
 # HPPA devices
 system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
+
+#WZab added devices
+
+system_ss.add(when: 'CONFIG_WZAB_PCI', if_true: files('wzab_enc1.c'))
+system_ss.add(when: 'CONFIG_WZAB_PCI', if_true: files('wzab_adc1.c'))
+system_ss.add(when: 'CONFIG_WZAB_PCI', if_true: files('wzab_tim1.c'))
+
+system_ss.add(when: 'CONFIG_WZAB', if_true: files('wzab_sysbus_enc1.c'))
+system_ss.add(when: 'CONFIG_WZAB', if_true: files('wzab_sysbus_adc1.c'))
+system_ss.add(when: 'CONFIG_WZAB', if_true: files('wzab_sysbus_tim1.c'))
+libmcrypt = cc.find_library('mcrypt', required: true)
+system_ss.add(declare_dependency(dependencies: libmcrypt))
+

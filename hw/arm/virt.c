@@ -182,7 +182,14 @@ static const MemMapEntry base_memmap[] = {
     [VIRT_GIC_ITS] =            { 0x08080000, 0x00020000 },
     /* This redistributor space allows up to 2*64kB*123 CPUs */
     [VIRT_GIC_REDIST] =         { 0x080A0000, 0x00F60000 },
+<<<<<<< ours
     [VIRT_UART0] =              { 0x09000000, 0x00001000 },
+=======
+    [VIRT_UART] =               { 0x09000000, 0x00001000 },
+    [VIRT_WZENC1] =             { 0x09008000, 0x00001000 }, //Added by WZab!
+    [VIRT_WZADC1] =             { 0x09009000, 0x00001000 }, //Added by WZab!
+    [VIRT_WZTIM1] =             { 0x0900A000, 0x00001000 }, //Added by WZab!
+>>>>>>> theirs
     [VIRT_RTC] =                { 0x09010000, 0x00001000 },
     [VIRT_FW_CFG] =             { 0x09020000, 0x00000018 },
     [VIRT_GPIO] =               { 0x09030000, 0x00001000 },
@@ -245,6 +252,9 @@ static const int a15irqmap[] = {
     [VIRT_GPIO] = 7,
     [VIRT_UART1] = 8,
     [VIRT_ACPI_GED] = 9,
+    [VIRT_WZENC1] = 10, //Added by WZab!
+    [VIRT_WZADC1] = 11, //Added by WZab!
+    [VIRT_WZTIM1] = 12, //Added by WZab!
     [VIRT_MMIO] = 16, /* ...to 16 + NUM_VIRTIO_TRANSPORTS - 1 */
     [VIRT_GIC_V2M] = 48, /* ...to 48 + NUM_GICV2M_SPIS - 1 */
     [VIRT_SMMU] = 74,    /* ...to 74 + NUM_SMMU_IRQS - 1 */
@@ -1032,6 +1042,78 @@ static void create_rtc(const VirtMachineState *vms)
     qemu_fdt_setprop(ms->fdt, nodename, "compatible", compat, sizeof(compat));
     qemu_fdt_setprop_sized_cells(ms->fdt, nodename, "reg",
                                  2, base, 2, size);
+    qemu_fdt_setprop_cells(ms->fdt, nodename, "interrupts",
+                           GIC_FDT_IRQ_TYPE_SPI, irq,
+                           GIC_FDT_IRQ_FLAGS_LEVEL_HI);
+    qemu_fdt_setprop_cell(ms->fdt, nodename, "clocks", vms->clock_phandle);
+    qemu_fdt_setprop_string(ms->fdt, nodename, "clock-names", "apb_pclk");
+    g_free(nodename);
+}
+
+static void create_wztim1(const VirtMachineState *vms)
+{
+    char *nodename;
+    MachineState *ms = MACHINE(vms);
+    hwaddr base = vms->memmap[VIRT_WZTIM1].base;
+    hwaddr size = vms->memmap[VIRT_WZTIM1].size;
+    int irq = vms->irqmap[VIRT_WZTIM1];
+    const char compat[] = "wzab_tim1";
+
+    sysbus_create_simple("sysbus-wztim1", base, qdev_get_gpio_in(vms->gic, irq));
+
+    nodename = g_strdup_printf("/wztim1@%" PRIx64, base);
+    qemu_fdt_add_subnode(ms->fdt, nodename);
+    qemu_fdt_setprop(ms->fdt, nodename, "compatible", compat, sizeof(compat));
+    qemu_fdt_setprop_sized_cells(ms->fdt, nodename, "reg",
+                                 2, base, 2, size);
+    qemu_fdt_setprop_cells(ms->fdt, nodename, "interrupts",
+                           GIC_FDT_IRQ_TYPE_SPI, irq,
+                           GIC_FDT_IRQ_FLAGS_LEVEL_HI);
+    qemu_fdt_setprop_cell(ms->fdt, nodename, "clocks", vms->clock_phandle);
+    qemu_fdt_setprop_string(ms->fdt, nodename, "clock-names", "apb_pclk");
+    g_free(nodename);
+}
+
+static void create_wzenc1(const VirtMachineState *vms)
+{
+    char *nodename;
+    MachineState *ms = MACHINE(vms);
+    hwaddr base = vms->memmap[VIRT_WZENC1].base;
+    hwaddr size = vms->memmap[VIRT_WZENC1].size;
+    int irq = vms->irqmap[VIRT_WZENC1];
+    const char compat[] = "wzab_enc1";
+
+    sysbus_create_simple("sysbus-wzenc1", base, qdev_get_gpio_in(vms->gic, irq));
+
+    nodename = g_strdup_printf("/wzenc1@%" PRIx64, base);
+    qemu_fdt_add_subnode(ms->fdt, nodename);
+    qemu_fdt_setprop(ms->fdt, nodename, "compatible", compat, sizeof(compat));
+    qemu_fdt_setprop_sized_cells(ms->fdt, nodename, "reg",
+                                 2, base, 2, size);
+    qemu_fdt_setprop_cells(ms->fdt, nodename, "interrupts",
+                           GIC_FDT_IRQ_TYPE_SPI, irq,
+                           GIC_FDT_IRQ_FLAGS_LEVEL_HI);
+    qemu_fdt_setprop_cell(ms->fdt, nodename, "clocks", vms->clock_phandle);
+    qemu_fdt_setprop_string(ms->fdt, nodename, "clock-names", "apb_pclk");
+    g_free(nodename);
+}
+
+static void create_wzadc1(const VirtMachineState *vms)
+{
+    char *nodename;
+    MachineState *ms = MACHINE(vms);
+    hwaddr base = vms->memmap[VIRT_WZADC1].base;
+    hwaddr size = vms->memmap[VIRT_WZADC1].size;
+    int irq = vms->irqmap[VIRT_WZADC1];
+    const char compat[] = "wzab_adc1";
+
+    sysbus_create_simple("sysbus-wzadc1", base, qdev_get_gpio_in(vms->gic, irq));
+
+    nodename = g_strdup_printf("/wzadc1@%" PRIx64, base);
+    qemu_fdt_add_subnode(ms->fdt, nodename);
+    qemu_fdt_setprop(ms->fdt, nodename, "compatible", compat, sizeof(compat));
+    qemu_fdt_setprop_sized_cells(ms->fdt, nodename, "reg",
+                                 4, base, 4, size);
     qemu_fdt_setprop_cells(ms->fdt, nodename, "interrupts",
                            GIC_FDT_IRQ_TYPE_SPI, irq,
                            GIC_FDT_IRQ_FLAGS_LEVEL_HI);
@@ -2525,6 +2607,12 @@ static void machvirt_init(MachineState *machine)
      /* connect powerdown request */
      vms->powerdown_notifier.notify = virt_powerdown_req;
      qemu_register_powerdown_notifier(&vms->powerdown_notifier);
+
+    create_wzenc1(vms);
+
+    create_wzadc1(vms);
+
+    create_wztim1(vms);
 
     /* Create mmio transports, so the user can create virtio backends
      * (which will be automatically plugged in to the transports). If

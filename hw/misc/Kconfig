@@ -30,6 +30,20 @@ config EDU
     default y if TEST_DEVICES
     depends on PCI && MSI_NONBROKEN
 
+<<<<<<< ours
+=======
+config WZAB_PCI
+    bool
+    depends on PCI
+
+config WZAB
+    bool
+
+config PCA9552
+    bool
+    depends on I2C
+
+>>>>>>> theirs
 config I2C_ECHO
     bool
     default y if TEST_DEVICES

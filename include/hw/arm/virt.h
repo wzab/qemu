@@ -81,7 +81,13 @@ enum {
     VIRT_ACPI_GED,
     VIRT_NVDIMM_ACPI,
     VIRT_PVTIME,
+<<<<<<< ours
     VIRT_ACPI_PCIHP,
+=======
+    VIRT_WZENC1,
+    VIRT_WZADC1,
+    VIRT_WZTIM1,
+>>>>>>> theirs
     VIRT_LOWMEMMAP_LAST,
 };
 
