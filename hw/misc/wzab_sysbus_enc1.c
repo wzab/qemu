@@ -31,7 +31,7 @@
 #include <string.h>
 #include "qemu/compiler.h"
 #include "migration/vmstate.h"
-#include "sysemu/reset.h"
+#include "system/reset.h"
 #include "hw/sysbus.h"
 #include "hw/hw.h"
 #include "hw/irq.h"
@@ -357,14 +357,14 @@ static void sysbus_wzenc1_reset(DeviceState *dev)
     wz_enc1_reset(d);
 }
 
-static void sysbus_wzenc1_class_init(ObjectClass *klass, void *data)
+static void sysbus_wzenc1_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     //SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
 
     //k->exit = sysbus_wzenc1_uninit;
     dc->desc = "SYSBUS demo AES accelerator";
-    dc->reset = sysbus_wzenc1_reset;
+    device_class_set_legacy_reset(dc, sysbus_wzenc1_reset);
     dc->vmsd = &vmstate_wz_enc1;
 }
 

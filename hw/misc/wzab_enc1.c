@@ -33,7 +33,7 @@
 #include "qemu/osdep.h"
 #include "qemu/compiler.h"
 #include "migration/vmstate.h"
-#include "sysemu/reset.h"
+#include "system/reset.h"
 #include <string.h>
 #include <inttypes.h>
 #include "hw/sysbus.h"
@@ -374,7 +374,7 @@ static void qdev_pci_wzenc1_reset(DeviceState *dev)
     wz_enc1_reset(d);
 }
 
-static void pci_wzenc1_class_init(ObjectClass *klass, void *data)
+static void pci_wzenc1_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
@@ -386,7 +386,7 @@ static void pci_wzenc1_class_init(ObjectClass *klass, void *data)
     k->class_id = PCI_CLASS_OTHERS;
     dc->desc = "PCI demo AES accelerator";
     set_bit(DEVICE_CATEGORY_MISC, dc->categories);
-    dc->reset = qdev_pci_wzenc1_reset;
+    device_class_set_legacy_reset(dc, qdev_pci_wzenc1_reset);
 }
 
 static void pci_wzenc1_register_types(void)

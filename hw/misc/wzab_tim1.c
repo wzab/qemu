@@ -66,7 +66,7 @@
 #include <string.h>
 #include "qemu/compiler.h"
 #include "migration/vmstate.h"
-#include "sysemu/reset.h"
+#include "system/reset.h"
 #include "hw/sysbus.h"
 #include "hw/hw.h"
 #include "hw/irq.h"
@@ -278,7 +278,7 @@ static void pci_wztim1_reset(DeviceState *dev)
     wztim1_reset(d);
 }
 
-static void pci_wztim1_class_init(ObjectClass *klass, void *data)
+static void pci_wztim1_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
@@ -291,7 +291,7 @@ static void pci_wztim1_class_init(ObjectClass *klass, void *data)
     k->class_id = PCI_CLASS_OTHERS;
     dc->desc = "PCI demo TIMER";
     set_bit(DEVICE_CATEGORY_MISC, dc->categories);
-    dc->reset = pci_wztim1_reset;
+    device_class_set_legacy_reset(dc, pci_wztim1_reset);
 }
 
 static void pci_wztim1_register_types(void)

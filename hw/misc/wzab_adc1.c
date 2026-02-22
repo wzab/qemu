@@ -72,7 +72,7 @@
 #include <inttypes.h>
 #include "qemu/compiler.h"
 #include "migration/vmstate.h"
-#include "sysemu/reset.h"
+#include "system/reset.h"
 #include <string.h>
 #include "hw/sysbus.h"
 #include "hw/hw.h"
@@ -308,7 +308,7 @@ static void qdev_pci_wz_adc1_reset(DeviceState *dev)
     wz_adc1_reset(d);
 }
 
-static void pci_wzadc1_class_init(ObjectClass *class, void *data)
+static void pci_wzadc1_class_init(ObjectClass *class, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(class);
     PCIDeviceClass *k = PCI_DEVICE_CLASS(class);
@@ -321,7 +321,7 @@ static void pci_wzadc1_class_init(ObjectClass *class, void *data)
     k->class_id = PCI_CLASS_OTHERS;
     dc->desc = "PCI demo BM DMA ADC";
     set_bit(DEVICE_CATEGORY_MISC, dc->categories);
-    dc->reset = qdev_pci_wz_adc1_reset;
+    device_class_set_legacy_reset(dc, qdev_pci_wz_adc1_reset);
 }
 
 
